@@ -1092,7 +1092,7 @@ extension Defaults.Keys {
     
     // MARK: Clipboard Feature
     static let enableClipboardManager = Key<Bool>("enableClipboardManager", default: true)
-    static let clipboardHistorySize = Key<Int>("clipboardHistorySize", default: 3)
+    static let clipboardHistorySize = Key<Int>("clipboardHistorySize", default: 10)
     static let showClipboardIcon = Key<Bool>("showClipboardIcon", default: true)
     static let clipboardDisplayMode = Key<ClipboardDisplayMode>("clipboardDisplayMode", default: .panel)
     

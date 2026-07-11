@@ -7349,18 +7349,22 @@ struct ClipboardSettings: View {
                     .settingsHighlight(id: highlightID("Display Mode"))
 
                     HStack {
-                        Text("History Size")
+                        Text("History Limit")
                         Spacer()
-                        Picker("", selection: $clipboardHistorySize) {
-                            Text("3 items").tag(3)
-                            Text("5 items").tag(5)
-                            Text("7 items").tag(7)
-                            Text("10 items").tag(10)
-                        }
-                        .pickerStyle(.menu)
-                        .frame(minWidth: 100)
+                        TextField("10–1000", value: $clipboardHistorySize, format: .number)
+                            .multilineTextAlignment(.trailing)
+                            .frame(width: 72)
+                        Text("items")
+                            .foregroundColor(.secondary)
                     }
                     .settingsHighlight(id: highlightID("History Size"))
+                    .onChange(of: clipboardHistorySize) { _, newValue in
+                        let clampedValue = min(max(newValue, 1), 1_000)
+                        if clampedValue != newValue {
+                            clipboardHistorySize = clampedValue
+                        }
+                        clipboardManager.applyHistoryLimit()
+                    }
 
                     HStack {
                         Text("Current Items")
@@ -7403,8 +7407,7 @@ struct ClipboardSettings: View {
                     .disabled(clipboardManager.clipboardHistory.isEmpty)
 
                     Button("Clear Pinned Items") {
-                        clipboardManager.pinnedItems.removeAll()
-                        clipboardManager.savePinnedItemsToDefaults()
+                        clipboardManager.clearPinnedItems()
                     }
                     .foregroundColor(.red)
                     .disabled(clipboardManager.pinnedItems.isEmpty)

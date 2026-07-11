@@ -252,8 +252,7 @@ struct ClipboardPanelHeader: View {
                     if selectedTab == .history {
                         clipboardManager.clearHistory()
                     } else {
-                        clipboardManager.pinnedItems.removeAll()
-                        clipboardManager.savePinnedItemsToDefaults()
+                        clipboardManager.clearPinnedItems()
                     }
                 }) {
                     Image(systemName: "trash")

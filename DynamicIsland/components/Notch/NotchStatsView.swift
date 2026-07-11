@@ -21,6 +21,7 @@ import Defaults
 
 // Graph data protocol for unified interface
 protocol GraphData {
+    var identifier: StatsGraphIdentifier { get }
     var title: String { get }
     var color: Color { get }
     var icon: String { get }
@@ -32,8 +33,17 @@ enum GraphType {
     case dual
 }
 
+enum StatsGraphIdentifier {
+    case cpu
+    case memory
+    case gpu
+    case network
+    case disk
+}
+
 // Single value graph data
 struct SingleGraphData: GraphData {
+    let identifier: StatsGraphIdentifier
     let title: String
     let value: String
     let data: [Double]
@@ -44,6 +54,7 @@ struct SingleGraphData: GraphData {
 
 // Dual value graph data (for network/disk)
 struct DualGraphData: GraphData {
+    let identifier: StatsGraphIdentifier
     let title: String
     let positiveValue: String
     let negativeValue: String
@@ -82,6 +93,7 @@ struct NotchStatsView: View {
 
         if showCpuGraph {
             graphs.append(SingleGraphData(
+                identifier: .cpu,
                 title: String(localized: "CPU"),
                 value: statsManager.cpuUsageString,
                 data: statsManager.cpuHistory,
@@ -92,6 +104,7 @@ struct NotchStatsView: View {
 
         if showMemoryGraph {
             graphs.append(SingleGraphData(
+                identifier: .memory,
                 title: String(localized: "Memory"),
                 value: statsManager.memoryUsageString,
                 data: statsManager.memoryHistory,
@@ -102,6 +115,7 @@ struct NotchStatsView: View {
 
         if showGpuGraph {
             graphs.append(SingleGraphData(
+                identifier: .gpu,
                 title: String(localized: "GPU"),
                 value: statsManager.gpuUsageString,
                 data: statsManager.gpuHistory,
@@ -112,6 +126,7 @@ struct NotchStatsView: View {
 
         if showNetworkGraph {
             graphs.append(DualGraphData(
+                identifier: .network,
                 title: String(localized: "Network"),
                 positiveValue: "↓" + statsManager.networkDownloadString,
                 negativeValue: "↑" + statsManager.networkUploadString,
@@ -126,6 +141,7 @@ struct NotchStatsView: View {
 
         if showDiskGraph {
             graphs.append(DualGraphData(
+                identifier: .disk,
                 title: String(localized: "Disk"),
                 positiveValue: String(localized: "R ") + statsManager.diskReadString,
                 negativeValue: String(localized: "W ") + statsManager.diskWriteString,
@@ -204,36 +220,32 @@ struct NotchStatsView: View {
                 RankedProcessPopover(
                     rankingType: rankingType,
                     onHoverChange: { hovering in
-                        switch graphData.title {
-                        case "CPU":
+                        switch graphData.identifier {
+                        case .cpu:
                             isHoveringCPUPopover = hovering
-                        case "Memory":
+                        case .memory:
                             isHoveringMemoryPopover = hovering
-                        case "GPU":
+                        case .gpu:
                             isHoveringGPUPopover = hovering
-                        case "Network":
+                        case .network:
                             isHoveringNetworkPopover = hovering
-                        case "Disk":
+                        case .disk:
                             isHoveringDiskPopover = hovering
-                        default:
-                            break
                         }
                     }
                 )
                 .onDisappear {
-                    switch graphData.title {
-                    case "CPU":
+                    switch graphData.identifier {
+                    case .cpu:
                         isHoveringCPUPopover = false
-                    case "Memory":
+                    case .memory:
                         isHoveringMemoryPopover = false
-                    case "GPU":
+                    case .gpu:
                         isHoveringGPUPopover = false
-                    case "Network":
+                    case .network:
                         isHoveringNetworkPopover = false
-                    case "Disk":
+                    case .disk:
                         isHoveringDiskPopover = false
-                    default:
-                        break
                     }
                     DispatchQueue.main.async {
                         updateStatsPopoverState()
@@ -254,53 +266,47 @@ struct NotchStatsView: View {
     }
 
     private func handleGraphClick(for graphData: GraphData) {
-        switch graphData.title {
-        case "CPU":
+        switch graphData.identifier {
+        case .cpu:
             showingCPUPopover = true
-        case "Memory":
+        case .memory:
             showingMemoryPopover = true
-        case "GPU":
+        case .gpu:
             showingGPUPopover = true
-        case "Network":
+        case .network:
             showingNetworkPopover = true
-        case "Disk":
+        case .disk:
             showingDiskPopover = true
-        default:
-            break
         }
     }
 
     private func bindingForGraph(_ graphData: GraphData) -> Binding<Bool> {
-        switch graphData.title {
-        case "CPU":
+        switch graphData.identifier {
+        case .cpu:
             return $showingCPUPopover
-        case "Memory":
+        case .memory:
             return $showingMemoryPopover
-        case "GPU":
+        case .gpu:
             return $showingGPUPopover
-        case "Network":
+        case .network:
             return $showingNetworkPopover
-        case "Disk":
+        case .disk:
             return $showingDiskPopover
-        default:
-            return .constant(false)
         }
     }
 
     private func rankingTypeForGraph(_ graphData: GraphData) -> ProcessRankingType? {
-        switch graphData.title {
-        case "CPU":
+        switch graphData.identifier {
+        case .cpu:
             return .cpu
-        case "Memory":
+        case .memory:
             return .memory
-        case "GPU":
+        case .gpu:
             return .gpu
-        case "Network":
+        case .network:
             return .network
-        case "Disk":
+        case .disk:
             return .disk
-        default:
-            return nil
         }
     }
     
@@ -485,13 +491,11 @@ struct UnifiedStatsCard: View {
             .frame(height: 36) // Match boring.notch exactly - reduced from 50
             
             // Click hint - shown for graphs that open popovers
-            if ["CPU", "Memory", "GPU", "Network", "Disk"].contains(graphData.title) {
-                Text("Click for details")
-                    .font(.caption2)
-                    .foregroundStyle(Color.white.opacity(0.75))
-                    .opacity(isHovered ? 1.0 : 0.0)
-                    .animation(.easeInOut(duration: 0.2), value: isHovered)
-            }
+            Text("Click for details")
+                .font(.caption2)
+                .foregroundStyle(Color.white.opacity(0.75))
+                .opacity(isHovered ? 1.0 : 0.0)
+                .animation(.easeInOut(duration: 0.2), value: isHovered)
         }
         .padding(8) // Match boring.notch padding - reduced from 10
         .background(
@@ -504,7 +508,7 @@ struct UnifiedStatsCard: View {
         )
         .scaleEffect(isHovered ? 1.02 : 1.0)
         .animation(.easeInOut(duration: 0.2), value: isHovered)
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .frame(maxWidth: .infinity, minHeight: 136, maxHeight: 136)
         .onHover { hovering in
             isHovered = hovering
         }

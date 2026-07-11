@@ -35,27 +35,30 @@ struct ClipboardItem: Identifiable, Codable {
     let stringData: String?
     let imageFileName: String? // Store filename instead of data
     let fileURLs: [String]?
-    let rtfData: Data? // RTF is typically small, so we can keep this
+    var rtfData: Data? // Legacy payloads are migrated to files on first launch.
+    var rtfFileName: String?
     
     init(stringData: String, type: ClipboardItemType) {
         self.stringData = stringData
         self.imageFileName = nil
         self.fileURLs = nil
         self.rtfData = nil
+        self.rtfFileName = nil
         self.type = type
         self.timestamp = Date()
         self.preview = ClipboardItem.generatePreview(stringData: stringData, type: type)
     }
     
-    init(imageData: Data) {
+    init(imageData: Data, fileExtension: String = "png") {
         self.stringData = nil
         self.fileURLs = nil
         self.rtfData = nil
+        self.rtfFileName = nil
         self.type = .image
         self.timestamp = Date()
         
         // Save image data to temporary file instead of storing in UserDefaults
-        let fileName = "clipboard_image_\(UUID().uuidString).png"
+        let fileName = "clipboard_image_\(UUID().uuidString).\(fileExtension.lowercased())"
         let fileURL = ClipboardManager.clipboardDataDirectory.appendingPathComponent(fileName)
         
         do {
@@ -74,6 +77,7 @@ struct ClipboardItem: Identifiable, Codable {
         self.imageFileName = nil
         self.fileURLs = fileURLs
         self.rtfData = nil
+        self.rtfFileName = nil
         self.type = .file
         self.timestamp = Date()
         
@@ -89,10 +93,20 @@ struct ClipboardItem: Identifiable, Codable {
         self.stringData = plainText
         self.imageFileName = nil
         self.fileURLs = nil
-        self.rtfData = rtfData.count > 100000 ? nil : rtfData // Skip very large RTF files
+        self.rtfData = nil
         self.type = .rtf
         self.timestamp = Date()
         self.preview = String(plainText.prefix(50))
+
+        let fileName = "clipboard_rtf_\(UUID().uuidString).rtf"
+        let fileURL = ClipboardManager.clipboardPayloadDirectory.appendingPathComponent(fileName)
+        do {
+            try rtfData.write(to: fileURL)
+            self.rtfFileName = fileName
+        } catch {
+            print("Failed to save RTF clipboard data: \(error)")
+            self.rtfFileName = nil
+        }
     }
     
     // Helper to get image data from file
@@ -100,6 +114,22 @@ struct ClipboardItem: Identifiable, Codable {
         guard let fileName = imageFileName else { return nil }
         let fileURL = ClipboardManager.clipboardDataDirectory.appendingPathComponent(fileName)
         return try? Data(contentsOf: fileURL)
+    }
+
+    var imagePasteboardType: NSPasteboard.PasteboardType {
+        guard let fileExtension = imageFileName.map({ URL(fileURLWithPath: $0).pathExtension }),
+              let type = UTType(filenameExtension: fileExtension) else {
+            return .png
+        }
+
+        return NSPasteboard.PasteboardType(type.identifier)
+    }
+
+    func getRTFData() -> Data? {
+        if let rtfFileName {
+            return try? Data(contentsOf: ClipboardManager.clipboardPayloadDirectory.appendingPathComponent(rtfFileName))
+        }
+        return rtfData
     }
     
     // Helper to check if this item has the same content as another
@@ -165,6 +195,11 @@ enum ClipboardItemType: String, CaseIterable, Codable {
     }
 }
 
+private struct ClipboardArchive: Codable {
+    var history: [ClipboardItem]
+    var pinnedItems: [ClipboardItem]
+}
+
 class ClipboardManager: ObservableObject {
     static let shared = ClipboardManager()
     
@@ -175,6 +210,7 @@ class ClipboardManager: ObservableObject {
     
     private var timer: Timer?
     private var lastChangeCount: Int = 0
+    private var cancellables = Set<AnyCancellable>()
     
     // Use configurable history size from settings
     private var maxHistoryItems: Int {
@@ -190,21 +226,46 @@ class ClipboardManager: ObservableObject {
         pinnedItems
     }
     
-    // Directory for storing clipboard data files
+    // The archive is the source of truth; in-memory arrays only back the live UI.
+    static let clipboardArchiveDirectory: URL = {
+        let applicationSupport = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first!
+        let directory = applicationSupport
+            .appendingPathComponent("Atoll", isDirectory: true)
+            .appendingPathComponent("Clipboard", isDirectory: true)
+
+        try? FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        return directory
+    }()
+
     static let clipboardDataDirectory: URL = {
-        let documentsPath = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first!
-        let clipboardDir = documentsPath.appendingPathComponent("ClipboardData")
-        
-        // Create directory if it doesn't exist
-        try? FileManager.default.createDirectory(at: clipboardDir, withIntermediateDirectories: true)
-        
-        return clipboardDir
+        let directory = clipboardArchiveDirectory.appendingPathComponent("Images", isDirectory: true)
+        try? FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        return directory
+    }()
+
+    static let clipboardPayloadDirectory: URL = {
+        let directory = clipboardArchiveDirectory.appendingPathComponent("Payloads", isDirectory: true)
+        try? FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        return directory
+    }()
+
+    private static let archiveFileURL = clipboardArchiveDirectory.appendingPathComponent("history.json")
+    private static let legacyClipboardDataDirectory: URL = {
+        FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first!
+            .appendingPathComponent("ClipboardData", isDirectory: true)
     }()
     
     private init() {
         lastChangeCount = NSPasteboard.general.changeCount
-        loadHistoryFromDefaults()
+        loadArchive()
         cleanupOldFiles()
+
+        Defaults.publisher(.clipboardHistorySize)
+            .dropFirst()
+            .sink { [weak self] _ in
+                self?.applyHistoryLimit()
+            }
+            .store(in: &cancellables)
     }
     
     deinit {
@@ -239,7 +300,7 @@ class ClipboardManager: ObservableObject {
             }
         case .image:
             if let imageData = item.getImageData() {
-                pasteboard.setData(imageData, forType: .png)
+                pasteboard.setData(imageData, forType: item.imagePasteboardType)
             }
         case .file:
             if let fileURLs = item.fileURLs {
@@ -247,7 +308,7 @@ class ClipboardManager: ObservableObject {
                 pasteboard.writeObjects(urls as [NSPasteboardWriting])
             }
         case .rtf:
-            if let rtfData = item.rtfData {
+            if let rtfData = item.getRTFData() {
                 pasteboard.setData(rtfData, forType: .rtf)
             }
             // Also set plain text as fallback
@@ -262,27 +323,19 @@ class ClipboardManager: ObservableObject {
     }
     
     func deleteItem(_ item: ClipboardItem) {
-        // Clean up associated files
-        if let fileName = item.imageFileName {
-            let fileURL = ClipboardManager.clipboardDataDirectory.appendingPathComponent(fileName)
-            try? FileManager.default.removeItem(at: fileURL)
-        }
-        
+        deletePayloadFiles(for: item)
         clipboardHistory.removeAll { $0.id == item.id }
-        saveHistoryToDefaults()
+        pinnedItems.removeAll { $0.id == item.id }
+        saveArchive()
     }
     
     func clearHistory() {
-        // Clean up all associated files
         for item in clipboardHistory {
-            if let fileName = item.imageFileName {
-                let fileURL = ClipboardManager.clipboardDataDirectory.appendingPathComponent(fileName)
-                try? FileManager.default.removeItem(at: fileURL)
-            }
+            deletePayloadFiles(for: item)
         }
         
         clipboardHistory.removeAll()
-        saveHistoryToDefaults()
+        saveArchive()
     }
     
     func pinItem(_ item: ClipboardItem) {
@@ -298,8 +351,7 @@ class ClipboardManager: ObservableObject {
             pinnedItems.append(pinnedItem)
         }
         
-        saveHistoryToDefaults()
-        savePinnedItemsToDefaults()
+        saveArchive()
     }
     
     func unpinItem(_ item: ClipboardItem) {
@@ -313,20 +365,8 @@ class ClipboardManager: ObservableObject {
         // Add back to regular history at the top
         clipboardHistory.insert(unpinnedItem, at: 0)
         
-        // Maintain history size limit
-        if clipboardHistory.count > maxHistoryItems {
-            let itemsToDelete = Array(clipboardHistory.dropFirst(maxHistoryItems))
-            for oldItem in itemsToDelete {
-                if let fileName = oldItem.imageFileName {
-                    let fileURL = ClipboardManager.clipboardDataDirectory.appendingPathComponent(fileName)
-                    try? FileManager.default.removeItem(at: fileURL)
-                }
-            }
-            clipboardHistory = Array(clipboardHistory.prefix(maxHistoryItems))
-        }
-        
-        saveHistoryToDefaults()
-        savePinnedItemsToDefaults()
+        trimHistoryToLimit()
+        saveArchive()
     }
     
     func togglePin(for item: ClipboardItem) {
@@ -335,6 +375,19 @@ class ClipboardManager: ObservableObject {
         } else {
             pinItem(item)
         }
+    }
+
+    func clearPinnedItems() {
+        for item in pinnedItems {
+            deletePayloadFiles(for: item)
+        }
+        pinnedItems.removeAll()
+        saveArchive()
+    }
+
+    func applyHistoryLimit() {
+        trimHistoryToLimit()
+        saveArchive()
     }
     
     // MARK: - Private Methods
@@ -387,7 +440,7 @@ class ClipboardManager: ObservableObject {
                     // If we have image files from Finder, load the actual image data
                     if !imageFiles.isEmpty, let firstImageURL = imageFiles.first {
                         if let imageData = try? Data(contentsOf: firstImageURL) {
-                            return ClipboardItem(imageData: imageData)
+                            return ClipboardItem(imageData: imageData, fileExtension: firstImageURL.pathExtension)
                         }
                     }
                     
@@ -401,11 +454,11 @@ class ClipboardManager: ObservableObject {
         // Priority 2: If there's ONLY image data without file URLs (screenshots, direct image paste)
         if hasImageData && !hasFileURLs {
             if let imageData = pasteboard.data(forType: .png) {
-                return ClipboardItem(imageData: imageData)
+                return ClipboardItem(imageData: imageData, fileExtension: "png")
             } else if let imageData = pasteboard.data(forType: .tiff) {
-                return ClipboardItem(imageData: imageData)
+                return ClipboardItem(imageData: imageData, fileExtension: "tiff")
             } else if let imageData = pasteboard.data(forType: NSPasteboard.PasteboardType("public.jpeg")) {
-                return ClipboardItem(imageData: imageData)
+                return ClipboardItem(imageData: imageData, fileExtension: "jpg")
             }
         }
         
@@ -448,12 +501,8 @@ class ClipboardManager: ObservableObject {
                 return self.isSameContent(existingItem, item)
             }
             
-            // Clean up files for items being removed
             for oldItem in itemsToRemove {
-                if let fileName = oldItem.imageFileName {
-                    let fileURL = ClipboardManager.clipboardDataDirectory.appendingPathComponent(fileName)
-                    try? FileManager.default.removeItem(at: fileURL)
-                }
+                self.deletePayloadFiles(for: oldItem)
             }
             
             self.clipboardHistory.removeAll { existingItem in
@@ -464,20 +513,8 @@ class ClipboardManager: ObservableObject {
             self.clipboardHistory.insert(item, at: 0)
             self.lastCopiedItemDate = item.timestamp
             
-            // Keep only the most recent items and clean up old files
-            let itemsToDelete = Array(self.clipboardHistory.dropFirst(self.maxHistoryItems))
-            for oldItem in itemsToDelete {
-                if let fileName = oldItem.imageFileName {
-                    let fileURL = ClipboardManager.clipboardDataDirectory.appendingPathComponent(fileName)
-                    try? FileManager.default.removeItem(at: fileURL)
-                }
-            }
-            
-            if self.clipboardHistory.count > self.maxHistoryItems {
-                self.clipboardHistory = Array(self.clipboardHistory.prefix(self.maxHistoryItems))
-            }
-            
-            self.saveHistoryToDefaults()
+            self.trimHistoryToLimit()
+            self.saveArchive()
         }
     }
     
@@ -496,7 +533,7 @@ class ClipboardManager: ObservableObject {
         case .file:
             return item1.fileURLs == item2.fileURLs
         case .rtf:
-            return item1.stringData == item2.stringData && item1.rtfData == item2.rtfData
+            return item1.stringData == item2.stringData && item1.getRTFData() == item2.getRTFData()
         }
     }
     
@@ -504,7 +541,8 @@ class ClipboardManager: ObservableObject {
     private func cleanupOldFiles() {
         guard let files = try? FileManager.default.contentsOfDirectory(at: ClipboardManager.clipboardDataDirectory, includingPropertiesForKeys: nil) else { return }
         
-        let referencedFiles = Set(clipboardHistory.compactMap { $0.imageFileName })
+        let allItems = clipboardHistory + pinnedItems
+        let referencedFiles = Set(allItems.compactMap { $0.imageFileName })
         
         for file in files {
             let fileName = file.lastPathComponent
@@ -512,31 +550,102 @@ class ClipboardManager: ObservableObject {
                 try? FileManager.default.removeItem(at: file)
             }
         }
+
+        guard let payloadFiles = try? FileManager.default.contentsOfDirectory(at: ClipboardManager.clipboardPayloadDirectory, includingPropertiesForKeys: nil) else { return }
+        let referencedPayloads = Set(allItems.compactMap { $0.rtfFileName })
+        for file in payloadFiles where !referencedPayloads.contains(file.lastPathComponent) {
+            try? FileManager.default.removeItem(at: file)
+        }
+    }
+
+    private func trimHistoryToLimit() {
+        let limit = max(1, maxHistoryItems)
+        let itemsToDelete = Array(clipboardHistory.dropFirst(limit))
+        for item in itemsToDelete {
+            deletePayloadFiles(for: item)
+        }
+        clipboardHistory = Array(clipboardHistory.prefix(limit))
+    }
+
+    private func deletePayloadFiles(for item: ClipboardItem) {
+        if let fileName = item.imageFileName {
+            try? FileManager.default.removeItem(at: ClipboardManager.clipboardDataDirectory.appendingPathComponent(fileName))
+        }
+        if let fileName = item.rtfFileName {
+            try? FileManager.default.removeItem(at: ClipboardManager.clipboardPayloadDirectory.appendingPathComponent(fileName))
+        }
     }
     
     // MARK: - Persistence
     
-    private func saveHistoryToDefaults() {
-        if let encoded = try? JSONEncoder().encode(clipboardHistory) {
-            UserDefaults.standard.set(encoded, forKey: "ClipboardHistory")
+    @discardableResult
+    private func saveArchive() -> Bool {
+        let archive = ClipboardArchive(history: clipboardHistory, pinnedItems: pinnedItems)
+
+        do {
+            let encoded = try JSONEncoder().encode(archive)
+            try encoded.write(to: ClipboardManager.archiveFileURL, options: .atomic)
+            return true
+        } catch {
+            print("Failed to save clipboard archive: \(error)")
+            return false
         }
     }
-    
-    func savePinnedItemsToDefaults() {
-        if let encoded = try? JSONEncoder().encode(pinnedItems) {
-            UserDefaults.standard.set(encoded, forKey: "ClipboardPinnedItems")
+
+    private func loadArchive() {
+        if let data = try? Data(contentsOf: ClipboardManager.archiveFileURL),
+           let archive = try? JSONDecoder().decode(ClipboardArchive.self, from: data) {
+            clipboardHistory = archive.history
+            pinnedItems = archive.pinnedItems
+            migrateLegacyImageFiles()
+            return
+        }
+
+        let legacyHistory = UserDefaults.standard.data(forKey: "ClipboardHistory")
+            .flatMap { try? JSONDecoder().decode([ClipboardItem].self, from: $0) } ?? []
+        let legacyPinnedItems = UserDefaults.standard.data(forKey: "ClipboardPinnedItems")
+            .flatMap { try? JSONDecoder().decode([ClipboardItem].self, from: $0) } ?? []
+
+        clipboardHistory = legacyHistory
+        pinnedItems = legacyPinnedItems
+        migrateLegacyImageFiles()
+        migrateLegacyRTFPayloads()
+
+        guard !legacyHistory.isEmpty || !legacyPinnedItems.isEmpty else { return }
+        if saveArchive() {
+            UserDefaults.standard.removeObject(forKey: "ClipboardHistory")
+            UserDefaults.standard.removeObject(forKey: "ClipboardPinnedItems")
         }
     }
-    
-    private func loadHistoryFromDefaults() {
-        if let data = UserDefaults.standard.data(forKey: "ClipboardHistory"),
-           let history = try? JSONDecoder().decode([ClipboardItem].self, from: data) {
-            clipboardHistory = history
+
+    private func migrateLegacyImageFiles() {
+        let fileManager = FileManager.default
+        let allItems = clipboardHistory + pinnedItems
+
+        for fileName in Set(allItems.compactMap(\.imageFileName)) {
+            let sourceURL = ClipboardManager.legacyClipboardDataDirectory.appendingPathComponent(fileName)
+            let destinationURL = ClipboardManager.clipboardDataDirectory.appendingPathComponent(fileName)
+
+            guard fileManager.fileExists(atPath: sourceURL.path), !fileManager.fileExists(atPath: destinationURL.path) else { continue }
+            try? fileManager.moveItem(at: sourceURL, to: destinationURL)
         }
-        
-        if let data = UserDefaults.standard.data(forKey: "ClipboardPinnedItems"),
-           let pinned = try? JSONDecoder().decode([ClipboardItem].self, from: data) {
-            pinnedItems = pinned
+    }
+
+    private func migrateLegacyRTFPayloads() {
+        migrateLegacyRTFPayloads(in: &clipboardHistory)
+        migrateLegacyRTFPayloads(in: &pinnedItems)
+    }
+
+    private func migrateLegacyRTFPayloads(in items: inout [ClipboardItem]) {
+        for index in items.indices {
+            guard items[index].rtfFileName == nil, let rtfData = items[index].rtfData else { continue }
+
+            let fileName = "clipboard_rtf_\(UUID().uuidString).rtf"
+            let fileURL = ClipboardManager.clipboardPayloadDirectory.appendingPathComponent(fileName)
+            guard (try? rtfData.write(to: fileURL)) != nil else { continue }
+
+            items[index].rtfFileName = fileName
+            items[index].rtfData = nil
         }
     }
 }
