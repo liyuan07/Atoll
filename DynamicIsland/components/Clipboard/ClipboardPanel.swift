@@ -19,6 +19,12 @@
 import AppKit
 import SwiftUI
 
+private extension Notification.Name {
+    static let clipboardPanelActivateSelection = Notification.Name(
+        "clipboardPanelActivateSelection"
+    )
+}
+
 private func applyClipboardCornerMask(_ view: NSView, radius: CGFloat) {
     view.wantsLayer = true
     view.layer?.masksToBounds = true
@@ -30,6 +36,8 @@ private func applyClipboardCornerMask(_ view: NSView, radius: CGFloat) {
 }
 
 class ClipboardPanel: NSPanel {
+    private var localKeyMonitor: Any?
+    private var globalKeyMonitor: Any?
     
     init() {
         super.init(
@@ -41,6 +49,7 @@ class ClipboardPanel: NSPanel {
         
         setupWindow()
         setupContentView()
+        installKeyMonitors()
     }
     
     // Override to allow the panel to become key window (required for TextField focus)
@@ -51,6 +60,63 @@ class ClipboardPanel: NSPanel {
     // Override to allow the panel to become main window (required for text input)
     override var canBecomeMain: Bool {
         return true
+    }
+
+    /// The native field editor can consume Return/Escape before the embedded
+    /// NSTextField sees them. Handle them at the panel boundary so these keys
+    /// are reliable regardless of which search-field responder is active.
+    override func sendEvent(_ event: NSEvent) {
+        if event.type == .keyDown, handlePanelKey(event) {
+            return
+        }
+        super.sendEvent(event)
+    }
+
+    override func close() {
+        removeKeyMonitors()
+        super.close()
+    }
+
+    private func installKeyMonitors() {
+        localKeyMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
+            guard let self, self.isVisible, self.handlePanelKey(event) else { return event }
+            return nil
+        }
+        globalKeyMonitor = NSEvent.addGlobalMonitorForEvents(matching: .keyDown) { [weak self] event in
+            guard [36, 53, 76].contains(event.keyCode) else { return }
+            DispatchQueue.main.async {
+                guard let self, self.isVisible else { return }
+                _ = self.handlePanelKey(event)
+            }
+        }
+    }
+
+    private func removeKeyMonitors() {
+        if let localKeyMonitor {
+            NSEvent.removeMonitor(localKeyMonitor)
+            self.localKeyMonitor = nil
+        }
+        if let globalKeyMonitor {
+            NSEvent.removeMonitor(globalKeyMonitor)
+            self.globalKeyMonitor = nil
+        }
+    }
+
+    @discardableResult
+    private func handlePanelKey(_ event: NSEvent) -> Bool {
+        switch event.keyCode {
+        case 36, 76:
+            NotificationCenter.default.post(
+                name: .clipboardPanelActivateSelection,
+                object: self
+            )
+            return true
+        case 53:
+            close()
+            return true
+        default:
+            return false
+        }
     }
     
     private func setupWindow() {
@@ -249,6 +315,9 @@ struct ClipboardPanelView: View {
         }
         .onChange(of: selectedTab) { _, _ in selectedItemID = filteredItems.first?.id }
         .onChange(of: searchText) { _, _ in selectedItemID = filteredItems.first?.id }
+        .onReceive(NotificationCenter.default.publisher(for: .clipboardPanelActivateSelection)) { _ in
+            activateSelection()
+        }
     }
 }
 
