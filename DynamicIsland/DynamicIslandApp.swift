@@ -550,6 +550,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         Defaults.Keys.migrateMusicControlSlots()
         Defaults.Keys.addFavoriteMusicControlIfNeeded()
         Defaults.Keys.migrateClipboardDatabaseSettings()
+        migrateClipboardShortcutIfNeeded()
         Defaults.Keys.migrateCapsLockTintMode()
         Defaults.Keys.migrateThirdPartyDDCIntegration()
 
@@ -1055,6 +1056,9 @@ class AppDelegate: NSObject, NSApplicationDelegate {
                 ClipboardManager.shared.startMonitoring()
             }
 
+            ClipboardPasteCoordinator.shared.captureCurrentApplication()
+            NSApp.activate(ignoringOtherApps: true)
+
             switch Defaults[.clipboardDisplayMode] {
             case .panel:
                 ClipboardPanelManager.shared.toggleClipboardPanel()
@@ -1141,6 +1145,20 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         updateShortcut(.colorPickerPanel, isEnabled: Defaults[.enableShortcuts] && Defaults[.enableColorPickerFeature])
         updateShortcut(.screenAssistantPanel, isEnabled: Defaults[.enableShortcuts] && Defaults[.enableScreenAssistant])
         updateShortcut(.toggleTerminalTab, isEnabled: Defaults[.enableShortcuts] && Defaults[.enableTerminalFeature])
+    }
+
+    private func migrateClipboardShortcutIfNeeded() {
+        let migrationKey = "didMigrateClipboardShortcutToCommandShiftJ"
+        guard !UserDefaults.standard.bool(forKey: migrationKey) else { return }
+
+        let oldDefault = KeyboardShortcuts.Shortcut(.c, modifiers: [.shift, .command])
+        if KeyboardShortcuts.getShortcut(for: .clipboardHistoryPanel) == oldDefault {
+            KeyboardShortcuts.setShortcut(
+                .init(.j, modifiers: [.shift, .command]),
+                for: .clipboardHistoryPanel
+            )
+        }
+        UserDefaults.standard.set(true, forKey: migrationKey)
     }
 
     @MainActor

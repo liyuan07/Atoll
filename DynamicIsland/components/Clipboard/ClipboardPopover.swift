@@ -26,19 +26,29 @@ struct ClipboardPopover: View {
     @State private var searchText = ""
     @State private var hoveredItemId: UUID?
     @State private var selectedItemID: UUID?
-    @FocusState private var isListFocused: Bool
     
     var filteredItems: [ClipboardItem] {
-        let allItems = selectedTab.items(from: clipboardManager)
-        
-        if searchText.isEmpty {
-            return allItems
-        } else {
-            return allItems.filter { item in
-                item.preview.localizedCaseInsensitiveContains(searchText) ||
-                item.type.displayName.localizedCaseInsensitiveContains(searchText)
-            }
+        fuzzyMatchedClipboardItems(query: searchText, items: selectedTab.items(from: clipboardManager))
+    }
+
+    private func moveSelection(_ direction: MoveCommandDirection) {
+        switch direction {
+        case .left, .right:
+            selectedTab = movedClipboardTab(from: selectedTab, direction: direction)
+        case .up, .down:
+            selectedItemID = movedClipboardSelection(from: selectedItemID, direction: direction, items: filteredItems)
+        default:
+            break
         }
+    }
+
+    private func activateSelection() {
+        guard let selectedItemID,
+              let item = filteredItems.first(where: { $0.id == selectedItemID })
+        else { return }
+        clipboardManager.activateItem(item)
+        dismiss()
+        ClipboardPasteCoordinator.shared.pasteIntoCapturedApplication()
     }
     
     var body: some View {
@@ -46,7 +56,10 @@ struct ClipboardPopover: View {
             // Header with tabs
             ClipboardPopoverHeader(
                 selectedTab: $selectedTab,
-                searchText: $searchText
+                searchText: $searchText,
+                onMove: moveSelection,
+                onActivate: activateSelection,
+                onCancel: { dismiss() }
             )
             
             Divider()
@@ -89,32 +102,8 @@ struct ClipboardPopover: View {
                 .fill(.regularMaterial)
                 .shadow(color: .black.opacity(0.2), radius: 8, x: 0, y: 4)
         )
-        .focusable()
-        .focused($isListFocused)
-        .onMoveCommand { direction in
-            switch direction {
-            case .left, .right:
-                selectedTab = movedClipboardTab(from: selectedTab, direction: direction)
-            case .up, .down:
-                selectedItemID = movedClipboardSelection(from: selectedItemID, direction: direction, items: filteredItems)
-            default:
-                break
-            }
-        }
-        .onKeyPress(.return) {
-            guard let selectedItemID,
-                  let item = filteredItems.first(where: { $0.id == selectedItemID })
-            else { return .ignored }
-            clipboardManager.activateItem(item)
-            dismiss()
-            return .handled
-        }
-        .onExitCommand {
-            dismiss()
-        }
         .onAppear {
             selectedItemID = filteredItems.first?.id
-            isListFocused = true
         }
         .onChange(of: selectedTab) { _, _ in selectedItemID = filteredItems.first?.id }
         .onChange(of: searchText) { _, _ in selectedItemID = filteredItems.first?.id }
@@ -124,8 +113,10 @@ struct ClipboardPopover: View {
 struct ClipboardPopoverHeader: View {
     @Binding var selectedTab: ClipboardTab
     @Binding var searchText: String
+    let onMove: (MoveCommandDirection) -> Void
+    let onActivate: () -> Void
+    let onCancel: () -> Void
     @ObservedObject var clipboardManager = ClipboardManager.shared
-    @FocusState private var isSearchFieldFocused: Bool
     
     var body: some View {
         VStack(spacing: 8) {
@@ -175,10 +166,14 @@ struct ClipboardPopoverHeader: View {
                     .foregroundColor(.secondary)
                     .font(.system(size: 11))
                 
-                TextField("Search...", text: $searchText)
-                    .textFieldStyle(PlainTextFieldStyle())
-                    .font(.system(size: 11))
-                    .focused($isSearchFieldFocused)
+                ClipboardSearchField(
+                    text: $searchText,
+                    placeholder: "搜索…",
+                    onMove: onMove,
+                    onActivate: onActivate,
+                    onCancel: onCancel
+                )
+                .frame(height: 17)
                 
                 if !searchText.isEmpty {
                     Button(action: { searchText = "" }) {

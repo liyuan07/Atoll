@@ -16,7 +16,164 @@
  * along with this program. If not, see <https://www.gnu.org/licenses/>.
  */
 
+import AppKit
 import SwiftUI
+
+func fuzzyMatchedClipboardItems(
+    query: String,
+    items: [ClipboardItem]
+) -> [ClipboardItem] {
+    let normalizedQuery = normalizedClipboardSearchText(query)
+    guard !normalizedQuery.isEmpty else { return items }
+
+    return items.compactMap { item -> (ClipboardItem, Int)? in
+        let searchableText = normalizedClipboardSearchText("\(item.preview) \(item.type.displayName)")
+        guard let score = clipboardFuzzyScore(query: normalizedQuery, candidate: searchableText) else {
+            return nil
+        }
+        return (item, score)
+    }
+    .sorted { lhs, rhs in
+        lhs.1 == rhs.1 ? lhs.0.timestamp > rhs.0.timestamp : lhs.1 > rhs.1
+    }
+    .map(\.0)
+}
+
+private func normalizedClipboardSearchText(_ text: String) -> String {
+    text.folding(options: [.caseInsensitive, .diacriticInsensitive, .widthInsensitive], locale: .current)
+        .lowercased()
+        .trimmingCharacters(in: .whitespacesAndNewlines)
+}
+
+private func clipboardFuzzyScore(query: String, candidate: String) -> Int? {
+    if candidate.hasPrefix(query) {
+        return 20_000 - candidate.count
+    }
+    if let range = candidate.range(of: query) {
+        return 15_000 - candidate.distance(from: candidate.startIndex, to: range.lowerBound)
+    }
+
+    let queryCharacters = Array(query)
+    let candidateCharacters = Array(candidate)
+    var candidateIndex = 0
+    var previousMatchIndex = -2
+    var score = 1_000
+
+    for queryCharacter in queryCharacters {
+        guard let matchIndex = candidateCharacters[candidateIndex...].firstIndex(of: queryCharacter) else {
+            return nil
+        }
+        score += 40
+        if matchIndex == previousMatchIndex + 1 { score += 25 }
+        score -= max(0, matchIndex - previousMatchIndex - 1)
+        previousMatchIndex = matchIndex
+        candidateIndex = matchIndex + 1
+    }
+
+    if previousMatchIndex - queryCharacters.count + 1 == 0 { score += 100 }
+    return score
+}
+
+struct ClipboardSearchField: NSViewRepresentable {
+    @Binding var text: String
+    let placeholder: String
+    let onMove: (MoveCommandDirection) -> Void
+    let onActivate: () -> Void
+    let onCancel: () -> Void
+
+    func makeCoordinator() -> Coordinator {
+        Coordinator(text: $text)
+    }
+
+    func makeNSView(context: Context) -> ClipboardNativeSearchField {
+        let field = ClipboardNativeSearchField()
+        field.delegate = context.coordinator
+        field.placeholderString = placeholder
+        field.isBordered = false
+        field.drawsBackground = false
+        field.focusRingType = .none
+        field.font = .systemFont(ofSize: 12)
+        field.onMove = onMove
+        field.onActivate = onActivate
+        field.onCancel = onCancel
+        return field
+    }
+
+    func updateNSView(_ field: ClipboardNativeSearchField, context: Context) {
+        if field.stringValue != text { field.stringValue = text }
+        field.onMove = onMove
+        field.onActivate = onActivate
+        field.onCancel = onCancel
+
+    }
+
+    final class Coordinator: NSObject, NSTextFieldDelegate {
+        @Binding var text: String
+        init(text: Binding<String>) {
+            _text = text
+        }
+
+        func controlTextDidChange(_ notification: Notification) {
+            guard let field = notification.object as? NSTextField else { return }
+            text = field.stringValue
+        }
+
+        func control(
+            _ control: NSControl,
+            textView: NSTextView,
+            doCommandBy commandSelector: Selector
+        ) -> Bool {
+            guard let field = control as? ClipboardNativeSearchField else { return false }
+
+            switch commandSelector {
+            case #selector(NSResponder.moveLeft(_:)):
+                field.onMove?(.left)
+            case #selector(NSResponder.moveRight(_:)):
+                field.onMove?(.right)
+            case #selector(NSResponder.moveUp(_:)):
+                field.onMove?(.up)
+            case #selector(NSResponder.moveDown(_:)):
+                field.onMove?(.down)
+            case #selector(NSResponder.insertNewline(_:)):
+                field.onActivate?()
+            case #selector(NSResponder.cancelOperation(_:)):
+                field.onCancel?()
+            default:
+                return false
+            }
+            return true
+        }
+    }
+}
+
+final class ClipboardNativeSearchField: NSTextField {
+    var onMove: ((MoveCommandDirection) -> Void)?
+    var onActivate: (() -> Void)?
+    var onCancel: (() -> Void)?
+    private var didRequestInitialFocus = false
+
+    override func viewDidMoveToWindow() {
+        super.viewDidMoveToWindow()
+        guard !didRequestInitialFocus, let window else { return }
+        didRequestInitialFocus = true
+        DispatchQueue.main.async { [weak self, weak window] in
+            guard let self, let window else { return }
+            window.makeFirstResponder(self)
+        }
+    }
+
+    override func keyDown(with event: NSEvent) {
+        switch event.keyCode {
+        case 123: onMove?(.left)
+        case 124: onMove?(.right)
+        case 125: onMove?(.down)
+        case 126: onMove?(.up)
+        case 36, 76: onActivate?()
+        case 53: onCancel?()
+        default: super.keyDown(with: event)
+        }
+    }
+}
 
 func movedClipboardSelection(
     from currentID: UUID?,

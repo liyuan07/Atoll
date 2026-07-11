@@ -19,6 +19,7 @@
 import SwiftUI
 import AppKit
 
+@MainActor
 class ClipboardWindowManager: ObservableObject {
     static let shared = ClipboardWindowManager()
     
@@ -27,6 +28,7 @@ class ClipboardWindowManager: ObservableObject {
     private init() {}
     
     func showClipboardWindow() {
+        ClipboardPasteCoordinator.shared.captureCurrentApplication()
         if let existingWindow = clipboardWindow {
             // Ensure window appears above fullscreen apps
             existingWindow.level = .screenSaver

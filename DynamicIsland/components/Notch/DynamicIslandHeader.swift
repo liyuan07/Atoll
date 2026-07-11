@@ -92,6 +92,7 @@ struct DynamicIslandHeader: View {
                         && showClipboardIcon
                         && clipboardDisplayMode != .separateTab {
                         Button(action: {
+                            ClipboardPasteCoordinator.shared.captureCurrentApplication()
                             // Switch behavior based on display mode
                             switch clipboardDisplayMode {
                             case .panel:

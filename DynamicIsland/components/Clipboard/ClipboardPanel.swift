@@ -34,7 +34,7 @@ class ClipboardPanel: NSPanel {
     init() {
         super.init(
             contentRect: .zero,
-            styleMask: [.borderless, .nonactivatingPanel],
+            styleMask: [.borderless],
             backing: .buffered,
             defer: true
         )
@@ -168,19 +168,29 @@ struct ClipboardPanelView: View {
     @State private var searchText = ""
     @State private var hoveredItemId: UUID?
     @State private var selectedItemID: UUID?
-    @FocusState private var isListFocused: Bool
     
     var filteredItems: [ClipboardItem] {
-        let allItems = selectedTab.items(from: clipboardManager)
-        
-        if searchText.isEmpty {
-            return allItems
-        } else {
-            return allItems.filter { item in
-                item.preview.localizedCaseInsensitiveContains(searchText) ||
-                item.type.displayName.localizedCaseInsensitiveContains(searchText)
-            }
+        fuzzyMatchedClipboardItems(query: searchText, items: selectedTab.items(from: clipboardManager))
+    }
+
+    private func moveSelection(_ direction: MoveCommandDirection) {
+        switch direction {
+        case .left, .right:
+            selectedTab = movedClipboardTab(from: selectedTab, direction: direction)
+        case .up, .down:
+            selectedItemID = movedClipboardSelection(from: selectedItemID, direction: direction, items: filteredItems)
+        default:
+            break
         }
+    }
+
+    private func activateSelection() {
+        guard let selectedItemID,
+              let item = filteredItems.first(where: { $0.id == selectedItemID })
+        else { return }
+        clipboardManager.activateItem(item)
+        onClose()
+        ClipboardPasteCoordinator.shared.pasteIntoCapturedApplication()
     }
     
     var body: some View {
@@ -189,6 +199,8 @@ struct ClipboardPanelView: View {
             ClipboardPanelHeader(
                 selectedTab: $selectedTab,
                 searchText: $searchText, 
+                onMove: moveSelection,
+                onActivate: activateSelection,
                 onClose: onClose
             )
             
@@ -232,32 +244,8 @@ struct ClipboardPanelView: View {
         .background(VisualEffectView(material: .hudWindow, blendingMode: .behindWindow))
         .cornerRadius(12)
         .shadow(color: .black.opacity(0.4), radius: 20, x: 0, y: 10)
-        .focusable()
-        .focused($isListFocused)
-        .onMoveCommand { direction in
-            switch direction {
-            case .left, .right:
-                selectedTab = movedClipboardTab(from: selectedTab, direction: direction)
-            case .up, .down:
-                selectedItemID = movedClipboardSelection(from: selectedItemID, direction: direction, items: filteredItems)
-            default:
-                break
-            }
-        }
-        .onKeyPress(.return) {
-            guard let selectedItemID,
-                  let item = filteredItems.first(where: { $0.id == selectedItemID })
-            else { return .ignored }
-            clipboardManager.activateItem(item)
-            onClose()
-            return .handled
-        }
-        .onExitCommand {
-            onClose()
-        }
         .onAppear {
             selectedItemID = filteredItems.first?.id
-            isListFocused = true
         }
         .onChange(of: selectedTab) { _, _ in selectedItemID = filteredItems.first?.id }
         .onChange(of: searchText) { _, _ in selectedItemID = filteredItems.first?.id }
@@ -267,9 +255,10 @@ struct ClipboardPanelView: View {
 struct ClipboardPanelHeader: View {
     @Binding var selectedTab: ClipboardTab
     @Binding var searchText: String
+    let onMove: (MoveCommandDirection) -> Void
+    let onActivate: () -> Void
     let onClose: () -> Void
     @ObservedObject var clipboardManager = ClipboardManager.shared
-    @FocusState private var isSearchFieldFocused: Bool
     
     var body: some View {
         VStack(spacing: 8) {
@@ -322,10 +311,14 @@ struct ClipboardPanelHeader: View {
                     .foregroundColor(.secondary)
                     .font(.system(size: 12))
                 
-                TextField("Search clipboard...", text: $searchText)
-                    .textFieldStyle(PlainTextFieldStyle())
-                    .font(.system(size: 12))
-                    .focused($isSearchFieldFocused)
+                ClipboardSearchField(
+                    text: $searchText,
+                    placeholder: "搜索剪切板…",
+                    onMove: onMove,
+                    onActivate: onActivate,
+                    onCancel: onClose
+                )
+                .frame(height: 18)
                 
                 if !searchText.isEmpty {
                     Button(action: { searchText = "" }) {

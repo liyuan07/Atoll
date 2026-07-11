@@ -19,6 +19,7 @@
 import AppKit
 import SwiftUI
 
+@MainActor
 class ClipboardPanelManager: ObservableObject {
     static let shared = ClipboardPanelManager()
     
@@ -28,22 +29,25 @@ class ClipboardPanelManager: ObservableObject {
     
     func showClipboardPanel() {
         hideClipboardPanel() // Close any existing panel
+        ClipboardPasteCoordinator.shared.captureCurrentApplication()
         
         let panel = ClipboardPanel()
         panel.positionNearNotch()
         
         self.clipboardPanel = panel
         
-        // Make the panel key and order front to ensure it can receive focus
+        // Activate the app to ensure proper focus handling
+        NSApp.activate(ignoringOtherApps: true)
+
+        // Make the panel key only after activation so the previous app does not
+        // reclaim keyboard input.
         panel.makeKeyAndOrderFront(nil)
         panel.orderFrontRegardless()
         
-        // Activate the app to ensure proper focus handling
-        NSApp.activate(ignoringOtherApps: true)
-        
         // Ensure the panel becomes the key window for text input
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
-            panel.makeKey()
+            NSApp.activate(ignoringOtherApps: true)
+            panel.makeKeyAndOrderFront(nil)
         }
     }
     

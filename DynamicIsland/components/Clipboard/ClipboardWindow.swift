@@ -23,28 +23,69 @@ struct ClipboardWindow: View {
     @ObservedObject var clipboardManager = ClipboardManager.shared
     @State private var selectedTab: ClipboardTab = .all
     @State private var searchText = ""
+    @State private var selectedItemID: UUID?
+
+    private var filteredItems: [ClipboardItem] {
+        fuzzyMatchedClipboardItems(query: searchText, items: selectedTab.items(from: clipboardManager))
+    }
+
+    private func moveSelection(_ direction: MoveCommandDirection) {
+        switch direction {
+        case .left, .right:
+            selectedTab = movedClipboardTab(from: selectedTab, direction: direction)
+        case .up, .down:
+            selectedItemID = movedClipboardSelection(from: selectedItemID, direction: direction, items: filteredItems)
+        default:
+            break
+        }
+    }
+
+    private func activateSelection() {
+        guard let selectedItemID,
+              let item = filteredItems.first(where: { $0.id == selectedItemID })
+        else { return }
+        clipboardManager.activateItem(item)
+        ClipboardWindowManager.shared.hideClipboardWindow()
+        ClipboardPasteCoordinator.shared.pasteIntoCapturedApplication()
+    }
     
     var body: some View {
         VStack(spacing: 0) {
             // Header with tabs and search
-            ClipboardWindowHeader(selectedTab: $selectedTab, searchText: $searchText)
+            ClipboardWindowHeader(
+                selectedTab: $selectedTab,
+                searchText: $searchText,
+                onMove: moveSelection,
+                onActivate: activateSelection,
+                onCancel: { ClipboardWindowManager.shared.hideClipboardWindow() }
+            )
             
             Divider()
                 .background(Color.gray.opacity(0.3))
             
             // Content area
-            ClipboardWindowContent(selectedTab: $selectedTab, searchText: searchText)
+            ClipboardWindowContent(
+                selectedTab: $selectedTab,
+                searchText: searchText,
+                selectedItemID: $selectedItemID
+            )
         }
         .frame(width: 420, height: 520)
         .background(VisualEffectView(material: .hudWindow, blendingMode: .behindWindow))
         .cornerRadius(12)
         .shadow(color: .black.opacity(0.4), radius: 20, x: 0, y: 10)
+        .onAppear {
+            selectedItemID = filteredItems.first?.id
+        }
     }
 }
 
 struct ClipboardWindowHeader: View {
     @Binding var selectedTab: ClipboardTab
     @Binding var searchText: String
+    let onMove: (MoveCommandDirection) -> Void
+    let onActivate: () -> Void
+    let onCancel: () -> Void
     @ObservedObject var clipboardManager = ClipboardManager.shared
     
     var body: some View {
@@ -96,9 +137,14 @@ struct ClipboardWindowHeader: View {
                     .foregroundColor(.secondary)
                     .font(.system(size: 12))
                 
-                TextField("Search clipboard...", text: $searchText)
-                    .textFieldStyle(PlainTextFieldStyle())
-                    .font(.system(size: 12))
+                ClipboardSearchField(
+                    text: $searchText,
+                    placeholder: "搜索剪切板…",
+                    onMove: onMove,
+                    onActivate: onActivate,
+                    onCancel: onCancel
+                )
+                .frame(height: 18)
                 
                 if !searchText.isEmpty {
                     Button(action: { searchText = "" }) {
@@ -122,21 +168,11 @@ struct ClipboardWindowHeader: View {
 struct ClipboardWindowContent: View {
     @Binding var selectedTab: ClipboardTab
     let searchText: String
+    @Binding var selectedItemID: UUID?
     @ObservedObject var clipboardManager = ClipboardManager.shared
-    @State private var selectedItemID: UUID?
-    @FocusState private var isListFocused: Bool
     
     var filteredItems: [ClipboardItem] {
-        let items = selectedTab.items(from: clipboardManager)
-        
-        if searchText.isEmpty {
-            return items
-        } else {
-            return items.filter { item in
-                item.preview.localizedCaseInsensitiveContains(searchText) ||
-                item.type.displayName.localizedCaseInsensitiveContains(searchText)
-            }
-        }
+        fuzzyMatchedClipboardItems(query: searchText, items: selectedTab.items(from: clipboardManager))
     }
     
     var body: some View {
@@ -164,33 +200,6 @@ struct ClipboardWindowContent: View {
                     }
                 }
             }
-        }
-        .focusable()
-        .focused($isListFocused)
-        .onMoveCommand { direction in
-            switch direction {
-            case .left, .right:
-                selectedTab = movedClipboardTab(from: selectedTab, direction: direction)
-            case .up, .down:
-                selectedItemID = movedClipboardSelection(from: selectedItemID, direction: direction, items: filteredItems)
-            default:
-                break
-            }
-        }
-        .onKeyPress(.return) {
-            guard let selectedItemID,
-                  let item = filteredItems.first(where: { $0.id == selectedItemID })
-            else { return .ignored }
-            clipboardManager.activateItem(item)
-            ClipboardWindowManager.shared.hideClipboardWindow()
-            return .handled
-        }
-        .onExitCommand {
-            ClipboardWindowManager.shared.hideClipboardWindow()
-        }
-        .onAppear {
-            selectedItemID = filteredItems.first?.id
-            isListFocused = true
         }
         .onChange(of: selectedTab) { _, _ in selectedItemID = filteredItems.first?.id }
         .onChange(of: searchText) { _, _ in selectedItemID = filteredItems.first?.id }
