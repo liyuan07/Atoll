@@ -335,6 +335,25 @@ class ClipboardManager: ObservableObject {
                 pasteboard.setString(stringData, forType: .string)
             }
         }
+
+        // This is an intentional write from the history UI. Consume its
+        // change count so the monitor does not create a duplicate entry.
+        lastChangeCount = pasteboard.changeCount
+        lastCopiedItemDate = Date()
+    }
+
+    func activateItem(_ item: ClipboardItem) {
+        copyToClipboard(item)
+
+        if let index = pinnedItems.firstIndex(where: { $0.id == item.id }) {
+            let promotedItem = pinnedItems.remove(at: index)
+            pinnedItems.insert(promotedItem, at: 0)
+        } else if let index = clipboardHistory.firstIndex(where: { $0.id == item.id }) {
+            let promotedItem = clipboardHistory.remove(at: index)
+            clipboardHistory.insert(promotedItem, at: 0)
+        }
+
+        saveArchive()
     }
     
     func deleteItem(_ item: ClipboardItem) {

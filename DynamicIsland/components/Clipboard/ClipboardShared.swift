@@ -38,6 +38,20 @@ func movedClipboardSelection(
     }
 }
 
+func movedClipboardTab(from currentTab: ClipboardTab, direction: MoveCommandDirection) -> ClipboardTab {
+    let tabs = ClipboardTab.allCases
+    guard let currentIndex = tabs.firstIndex(of: currentTab) else { return .all }
+
+    switch direction {
+    case .left:
+        return tabs[max(0, currentIndex - 1)]
+    case .right:
+        return tabs[min(tabs.count - 1, currentIndex + 1)]
+    default:
+        return currentTab
+    }
+}
+
 enum ClipboardTab: String, CaseIterable {
     case all = "All"
     case text = "Text"
@@ -57,11 +71,11 @@ enum ClipboardTab: String, CaseIterable {
     
     var localizedName: String {
         switch self {
-        case .all: return String(localized: "All")
-        case .text: return String(localized: "Text")
-        case .images: return String(localized: "Image")
-        case .files: return String(localized: "File")
-        case .favorites: return String(localized: "Favorites")
+        case .all: return "全部"
+        case .text: return "文本"
+        case .images: return "图片"
+        case .files: return "文件"
+        case .favorites: return "收藏"
         }
     }
 

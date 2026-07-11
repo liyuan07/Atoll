@@ -53,7 +53,9 @@ extension MediaControllerProtocol {
 
 private enum MediaRemoteFavoriteCommand {
     private typealias SendCommand = @convention(c) (Int, AnyObject?) -> Void
-    private static let likeTrackCommand = 0x6A
+    // MRMediaRemoteCommandLikeTrack. The previous value (0x6A) is not the
+    // MediaRemote Like command and was ignored by players such as Soda Music.
+    private static let likeTrackCommand = 21
 
     static func send() {
         guard let bundle = CFBundleCreate(

@@ -898,8 +898,8 @@ struct SettingsView: View {
             SettingsSearchEntry(tab: .clipboard, title: "Enable Clipboard Manager", keywords: ["clipboard", "manager"], highlightID: SettingsTab.clipboard.highlightID(for: "Enable Clipboard Manager")),
             SettingsSearchEntry(tab: .clipboard, title: "Show Clipboard Icon", keywords: ["icon", "clipboard"], highlightID: SettingsTab.clipboard.highlightID(for: "Show Clipboard Icon")),
             SettingsSearchEntry(tab: .clipboard, title: "Display Mode", keywords: ["list", "grid", "clipboard"], highlightID: SettingsTab.clipboard.highlightID(for: "Display Mode")),
-            SettingsSearchEntry(tab: .clipboard, title: "Auto Expiration", keywords: ["history", "clipboard", "cleanup", "days"], highlightID: SettingsTab.clipboard.highlightID(for: "Auto Expiration")),
-            SettingsSearchEntry(tab: .clipboard, title: "Maximum Items", keywords: ["history", "clipboard", "limit", "database"], highlightID: SettingsTab.clipboard.highlightID(for: "Maximum Items")),
+            SettingsSearchEntry(tab: .clipboard, title: "自动过期", keywords: ["历史", "剪贴板", "清理", "天数"], highlightID: SettingsTab.clipboard.highlightID(for: "Auto Expiration")),
+            SettingsSearchEntry(tab: .clipboard, title: "最大保留数量", keywords: ["历史", "剪贴板", "限制", "数据库"], highlightID: SettingsTab.clipboard.highlightID(for: "Maximum Items")),
 
             // Screen Assistant
             SettingsSearchEntry(tab: .screenAssistant, title: "Enable Screen Assistant", keywords: ["screen assistant", "ai"], highlightID: SettingsTab.screenAssistant.highlightID(for: "Enable Screen Assistant")),
@@ -7370,20 +7370,20 @@ struct ClipboardSettings: View {
                 Section {
                     HStack(alignment: .top) {
                         VStack(alignment: .leading, spacing: 4) {
-                            Text("Auto Expiration")
-                            Text("Items older than this are cleaned up in the background at launch. Pinned favorites never expire.")
+                            Text("自动过期")
+                            Text("超过设定时间的条目会在启动后清理，置顶和收藏内容不受影响。")
                                 .font(.caption)
                                 .foregroundStyle(.secondary)
                         }
                         Spacer()
                         Picker("", selection: $clipboardExpirationDays) {
-                            Text("Never").tag(0)
-                            Text("1 day").tag(1)
-                            Text("7 days").tag(7)
-                            Text("30 days").tag(30)
-                            Text("90 days").tag(90)
-                            Text("180 days").tag(180)
-                            Text("1 year").tag(365)
+                            Text("永不").tag(0)
+                            Text("1 天").tag(1)
+                            Text("7 天").tag(7)
+                            Text("30 天").tag(30)
+                            Text("90 天").tag(90)
+                            Text("180 天").tag(180)
+                            Text("1 年").tag(365)
                         }
                         .pickerStyle(.menu)
                         .frame(width: 150)
@@ -7392,8 +7392,8 @@ struct ClipboardSettings: View {
 
                     HStack(alignment: .top) {
                         VStack(alignment: .leading, spacing: 4) {
-                            Text("Maximum Items")
-                            Text("The oldest unpinned items beyond this limit are removed during background cleanup.")
+                            Text("最大保留数量")
+                            Text("超过此数量的最旧条目会在下次清理时移除，置顶和收藏内容不受影响。")
                                 .font(.caption)
                                 .foregroundStyle(.secondary)
                         }
@@ -7413,9 +7413,9 @@ struct ClipboardSettings: View {
                         clipboardManager.applyHistoryLimit()
                     }
                 } header: {
-                    Text("Database")
+                    Text("数据库")
                 } footer: {
-                    Text("Cleanup runs after launch so it does not delay Atoll startup.")
+                    Text("过期清理会在 Atoll 启动后执行，不影响启动速度。")
                 }
 
                 Section {

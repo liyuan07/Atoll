@@ -88,7 +88,7 @@ class ClipboardPanel: NSPanel {
         self.contentView = hostingView
         
         // Set initial size
-        let preferredSize = CGSize(width: 320, height: 400)
+        let preferredSize = CGSize(width: 420, height: 520)
         hostingView.setFrameSize(preferredSize)
         setContentSize(preferredSize)
     }
@@ -228,14 +228,28 @@ struct ClipboardPanelView: View {
                 }
             }
         }
-        .frame(width: 320, height: 400)
+        .frame(width: 420, height: 520)
         .background(VisualEffectView(material: .hudWindow, blendingMode: .behindWindow))
         .cornerRadius(12)
         .shadow(color: .black.opacity(0.4), radius: 20, x: 0, y: 10)
         .focusable()
         .focused($isListFocused)
         .onMoveCommand { direction in
-            selectedItemID = movedClipboardSelection(from: selectedItemID, direction: direction, items: filteredItems)
+            switch direction {
+            case .left, .right:
+                selectedTab = movedClipboardTab(from: selectedTab, direction: direction)
+            case .up, .down:
+                selectedItemID = movedClipboardSelection(from: selectedItemID, direction: direction, items: filteredItems)
+            default:
+                break
+            }
+        }
+        .onKeyPress(.return) {
+            guard let selectedItemID,
+                  let item = filteredItems.first(where: { $0.id == selectedItemID })
+            else { return .ignored }
+            clipboardManager.activateItem(item)
+            return .handled
         }
         .onAppear {
             selectedItemID = filteredItems.first?.id
@@ -341,19 +355,19 @@ struct ClipboardPanelEmptyState: View {
                 .foregroundColor(.secondary)
             
             if hasSearch {
-                Text("No results found")
+                Text("没有找到结果")
                     .font(.system(size: 14, weight: .medium))
                     .foregroundColor(.primary)
                 
-                Text("Try adjusting your search terms")
+                Text("请尝试其他搜索关键词")
                     .font(.system(size: 12))
                     .foregroundColor(.secondary)
             } else {
-                Text("No \(selectedTab.localizedName.lowercased()) items")
+                Text("暂无\(selectedTab.localizedName)内容")
                     .font(.system(size: 14, weight: .medium))
                     .foregroundColor(.primary)
                 
-                Text(selectedTab == .favorites ? "Pin items to add them to favorites" : "Copy something to get started")
+                Text(selectedTab == .favorites ? "将条目加入收藏后会显示在这里" : "复制内容后会显示在这里")
                     .font(.system(size: 12))
                     .foregroundColor(.secondary)
             }
@@ -475,16 +489,16 @@ struct ClipboardPanelItemRow: View {
         let interval = Date().timeIntervalSince(date)
         
         if interval < 60 {
-            return String(localized: "Just now")
+            return "刚刚"
         } else if interval < 3600 {
             let minutes = Int(interval / 60)
-            return String(localized: "\(minutes)m ago")
+            return "\(minutes) 分钟前"
         } else if interval < 86400 {
             let hours = Int(interval / 3600)
-            return String(localized: "\(hours)h ago")
+            return "\(hours) 小时前"
         } else {
             let days = Int(interval / 86400)
-            return String(localized: "\(days)d ago")
+            return "\(days) 天前"
         }
     }
 }

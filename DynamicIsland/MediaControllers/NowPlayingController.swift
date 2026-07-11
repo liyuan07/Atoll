@@ -40,6 +40,7 @@ final class NowPlayingController: ObservableObject, MediaControllerProtocol {
     var isWorking: Bool {
         return process != nil && process?.isRunning == true
     }
+    var supportsFavoriteToggle: Bool { true }
     private var lastMusicItem:
         (title: String, artist: String, album: String, duration: TimeInterval, artworkData: Data?)?
 
@@ -278,6 +279,7 @@ struct NowPlayingPayload: Codable {
     let shuffleMode: Int?
     let repeatMode: Int?
     let isLiked: Bool?
+    let supportsIsLiked: Bool?
     let artworkData: String?
     let timestamp: String?
     let playbackRate: Double?

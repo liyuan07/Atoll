@@ -33,9 +33,9 @@ struct ClipboardWindow: View {
                 .background(Color.gray.opacity(0.3))
             
             // Content area
-            ClipboardWindowContent(selectedTab: selectedTab, searchText: searchText)
+            ClipboardWindowContent(selectedTab: $selectedTab, searchText: searchText)
         }
-        .frame(width: 400, height: 300)
+        .frame(width: 420, height: 520)
         .background(VisualEffectView(material: .hudWindow, blendingMode: .behindWindow))
         .cornerRadius(12)
         .shadow(color: .black.opacity(0.4), radius: 20, x: 0, y: 10)
@@ -120,7 +120,7 @@ struct ClipboardWindowHeader: View {
 }
 
 struct ClipboardWindowContent: View {
-    let selectedTab: ClipboardTab
+    @Binding var selectedTab: ClipboardTab
     let searchText: String
     @ObservedObject var clipboardManager = ClipboardManager.shared
     @State private var selectedItemID: UUID?
@@ -168,7 +168,21 @@ struct ClipboardWindowContent: View {
         .focusable()
         .focused($isListFocused)
         .onMoveCommand { direction in
-            selectedItemID = movedClipboardSelection(from: selectedItemID, direction: direction, items: filteredItems)
+            switch direction {
+            case .left, .right:
+                selectedTab = movedClipboardTab(from: selectedTab, direction: direction)
+            case .up, .down:
+                selectedItemID = movedClipboardSelection(from: selectedItemID, direction: direction, items: filteredItems)
+            default:
+                break
+            }
+        }
+        .onKeyPress(.return) {
+            guard let selectedItemID,
+                  let item = filteredItems.first(where: { $0.id == selectedItemID })
+            else { return .ignored }
+            clipboardManager.activateItem(item)
+            return .handled
         }
         .onAppear {
             selectedItemID = filteredItems.first?.id
@@ -190,19 +204,19 @@ struct ClipboardEmptyState: View {
                 .foregroundColor(.secondary)
             
             if hasSearch {
-                Text("No results found")
+                Text("没有找到结果")
                     .font(.system(size: 14, weight: .medium))
                     .foregroundColor(.primary)
                 
-                Text("Try adjusting your search terms")
+                Text("请尝试其他搜索关键词")
                     .font(.system(size: 12))
                     .foregroundColor(.secondary)
             } else {
-                Text("No \(tab.localizedName.lowercased()) items")
+                Text("暂无\(tab.localizedName)内容")
                     .font(.system(size: 14, weight: .medium))
                     .foregroundColor(.primary)
                 
-                Text(tab == .favorites ? "Pin items from history to save them here" : "Copy something to get started")
+                Text(tab == .favorites ? "将条目加入收藏后会显示在这里" : "复制内容后会显示在这里")
                     .font(.system(size: 12))
                     .foregroundColor(.secondary)
                     .multilineTextAlignment(.center)
@@ -314,22 +328,22 @@ struct ClipboardWindowItemRow: View {
         let interval = Date().timeIntervalSince(date)
         
         if interval < 60 {
-            return "Just now"
+            return "刚刚"
         } else if interval < 3600 {
             let minutes = Int(interval / 60)
-            return "\(minutes)m ago"
+            return "\(minutes) 分钟前"
         } else if interval < 86400 {
             let hours = Int(interval / 3600)
-            return "\(hours)h ago"
+            return "\(hours) 小时前"
         } else {
             let days = Int(interval / 86400)
-            return "\(days)d ago"
+            return "\(days) 天前"
         }
     }
 }
 
 #Preview {
     ClipboardWindow()
-        .frame(width: 400, height: 300)
+        .frame(width: 420, height: 520)
         .background(Color.gray.opacity(0.3))
 }
