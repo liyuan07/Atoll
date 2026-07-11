@@ -701,6 +701,16 @@ struct LockScreenMusicPanel: View {
             ) {
                 musicManager.seek(by: seekInterval)
             }
+        case .favorite:
+            controlButton(
+                icon: musicManager.isFavorited ? "heart.fill" : "heart",
+                size: 18,
+                isActive: musicManager.isFavorited,
+                activeColor: brandAccentColor,
+                symbolEffect: .replace
+            ) {
+                musicManager.toggleFavorite()
+            }
         case .shuffle:
             controlButton(
                 icon: "shuffle",

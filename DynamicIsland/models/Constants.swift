@@ -490,6 +490,7 @@ enum BatteryNotificationStyle: String, CaseIterable, Identifiable, Defaults.Seri
 }
 
 enum MusicAuxiliaryControl: String, CaseIterable, Identifiable, Defaults.Serializable {
+    case favorite
     case shuffle
     case repeatMode
     case mediaOutput
@@ -499,6 +500,8 @@ enum MusicAuxiliaryControl: String, CaseIterable, Identifiable, Defaults.Seriali
 
     var displayName: String {
         switch self {
+        case .favorite:
+            return "Favorite"
         case .shuffle:
             return "Shuffle"
         case .repeatMode:
@@ -512,6 +515,8 @@ enum MusicAuxiliaryControl: String, CaseIterable, Identifiable, Defaults.Seriali
 
     var symbolName: String {
         switch self {
+        case .favorite:
+            return "heart"
         case .shuffle:
             return "shuffle"
         case .repeatMode:
@@ -872,6 +877,7 @@ extension Defaults.Keys {
     static let didMigrateMusicAuxControls = Key<Bool>("didMigrateMusicAuxControls", default: false)
     static let musicControlSlots = Key<[MusicControlButton]>("musicControlSlots", default: MusicControlButton.defaultLayout)
     static let didMigrateMusicControlSlots = Key<Bool>("didMigrateMusicControlSlots", default: false)
+    static let didAddFavoriteMusicControl = Key<Bool>("didAddFavoriteMusicControl", default: false)
     static let musicSkipBehavior = Key<MusicSkipBehavior>("musicSkipBehavior", default: .track)
     static let musicControlWindowEnabled = Key<Bool>("musicControlWindowEnabled", default: false)
     static let showStandardMediaControls = Key<Bool>("showStandardMediaControls", default: true)
@@ -1306,6 +1312,26 @@ extension Defaults.Keys {
 
         Defaults[.musicControlSlots] = baseLayout.normalized(allowingMediaOutput: allowMediaOutput)
         Defaults[.didMigrateMusicControlSlots] = true
+    }
+
+    static func addFavoriteMusicControlIfNeeded() {
+        guard Defaults[.didAddFavoriteMusicControl] == false else { return }
+
+        var slots = Defaults[.musicControlSlots].normalized(
+            allowingMediaOutput: Defaults[.showMediaOutputControl]
+        )
+        if !slots.contains(.favorite) {
+            if let shuffleIndex = slots.firstIndex(of: .shuffle) {
+                slots[shuffleIndex] = .favorite
+            } else if let emptyIndex = slots.firstIndex(of: .none) {
+                slots[emptyIndex] = .favorite
+            } else if !slots.isEmpty {
+                slots[0] = .favorite
+            }
+        }
+
+        Defaults[.musicControlSlots] = slots
+        Defaults[.didAddFavoriteMusicControl] = true
     }
 
     static func migrateThirdPartyDDCIntegration() {

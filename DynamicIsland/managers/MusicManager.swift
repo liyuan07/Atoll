@@ -472,6 +472,7 @@ class MusicManager: ObservableObject {
     @Published var playbackRate: Double = 1
     @Published var isShuffled: Bool = false
     @Published var repeatMode: RepeatMode = .off
+    @Published var isFavorited: Bool = false
     @Published var isLiveStream: Bool = false
     @ObservedObject var coordinator = DynamicIslandViewCoordinator.shared
     @Published var usingAppIconForArtwork: Bool = false
@@ -745,6 +746,9 @@ class MusicManager: ObservableObject {
         let shouldAutoPeekOnTrackChange = Defaults[.showSneakPeekOnTrackChange]
 
         if hasContentChange {
+            if state.isFavorited == nil {
+                self.isFavorited = false
+            }
             self.triggerFlipAnimation()
 
             if artworkChanged, let artwork = state.artwork {
@@ -789,6 +793,7 @@ class MusicManager: ObservableObject {
         let playbackRateChanged = state.playbackRate != self.playbackRate
         let shuffleChanged = state.isShuffled != self.isShuffled
         let repeatModeChanged = state.repeatMode != self.repeatMode
+        let favoriteChanged = state.isFavorited.map { $0 != self.isFavorited } ?? false
 
         if state.title != self.songTitle {
             self.songTitle = state.title
@@ -826,6 +831,10 @@ class MusicManager: ObservableObject {
 
         if repeatModeChanged {
             self.repeatMode = state.repeatMode
+        }
+
+        if favoriteChanged, let isFavorited = state.isFavorited {
+            self.isFavorited = isFavorited
         }
         
         updateLiveStreamState(with: state)
@@ -1148,6 +1157,14 @@ class MusicManager: ObservableObject {
     func toggleRepeat() {
         Task {
             await activeController?.toggleRepeat()
+        }
+    }
+
+    func toggleFavorite() {
+        guard let controller = activeController else { return }
+        isFavorited.toggle()
+        Task {
+            await controller.toggleFavorite()
         }
     }
     

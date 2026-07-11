@@ -940,6 +940,15 @@ private struct MinimalisticReminderDetailsView: View {
                 trigger: skipGestureTrigger(for: .seekForward),
                 action: { musicManager.seek(by: seekInterval) }
             )
+        case .favorite:
+            controlButton(
+                icon: musicManager.isFavorited ? "heart.fill" : "heart",
+                isActive: musicManager.isFavorited,
+                activeColor: brandAccentColor,
+                symbolEffect: .replace
+            ) {
+                musicManager.toggleFavorite()
+            }
         case .shuffle:
             controlButton(icon: "shuffle", isActive: musicManager.isShuffled) {
                 Task { await musicManager.toggleShuffle() }

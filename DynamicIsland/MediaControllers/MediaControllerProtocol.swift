@@ -35,6 +35,32 @@ protocol MediaControllerProtocol: ObservableObject {
     func togglePlay() async
     func toggleShuffle() async
     func toggleRepeat() async
+    func toggleFavorite() async
     func isActive() -> Bool
     func updatePlaybackInfo() async
+}
+
+extension MediaControllerProtocol {
+    /// Uses macOS' native MediaRemote Like command for players that expose it.
+    /// Players without Like support simply ignore the command.
+    func toggleFavorite() async {
+        MediaRemoteFavoriteCommand.send()
+    }
+}
+
+private enum MediaRemoteFavoriteCommand {
+    private typealias SendCommand = @convention(c) (Int, AnyObject?) -> Void
+    private static let likeTrackCommand = 0x6A
+
+    static func send() {
+        guard let bundle = CFBundleCreate(
+            kCFAllocatorDefault,
+            NSURL(fileURLWithPath: "/System/Library/PrivateFrameworks/MediaRemote.framework")
+        ),
+        let pointer = CFBundleGetFunctionPointerForName(bundle, "MRMediaRemoteSendCommand" as CFString)
+        else { return }
+
+        let sendCommand = unsafeBitCast(pointer, to: SendCommand.self)
+        sendCommand(likeTrackCommand, nil)
+    }
 }

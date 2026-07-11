@@ -42,6 +42,7 @@ struct PlaybackState {
     var playbackRate: Double = 1
     var isShuffled: Bool = false
     var repeatMode: RepeatMode = .off
+    var isFavorited: Bool?
     var lastUpdated: Date = Date.distantPast
     var artwork: Data?
     var liveArtworkURL: URL?
@@ -61,6 +62,7 @@ extension PlaybackState: Equatable {
             && lhs.duration == rhs.duration
             && lhs.isShuffled == rhs.isShuffled
             && lhs.repeatMode == rhs.repeatMode
+            && lhs.isFavorited == rhs.isFavorited
             && lhs.artwork == rhs.artwork
             && lhs.liveArtworkURL == rhs.liveArtworkURL
     }

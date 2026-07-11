@@ -23,6 +23,7 @@
 import Defaults
 
 enum MusicControlButton: String, CaseIterable, Identifiable, Codable, Defaults.Serializable {
+    case favorite
     case shuffle
     case trackBackward
     case playPause
@@ -38,7 +39,7 @@ enum MusicControlButton: String, CaseIterable, Identifiable, Codable, Defaults.S
     static let slotCount = 5
 
     static let defaultLayout: [MusicControlButton] = [
-        .shuffle,
+        .favorite,
         .trackBackward,
         .playPause,
         .trackForward,
@@ -59,6 +60,7 @@ enum MusicControlButton: String, CaseIterable, Identifiable, Codable, Defaults.S
         .trackForward,
         .seekBackward,
         .seekForward,
+        .favorite,
         .shuffle,
         .repeatMode,
         .lyrics,
@@ -75,6 +77,8 @@ enum MusicControlButton: String, CaseIterable, Identifiable, Codable, Defaults.S
 
     var label: String {
         switch self {
+        case .favorite:
+            return String(localized: "Favorite")
         case .shuffle:
             return String(localized: "Shuffle")
         case .trackBackward:
@@ -102,6 +106,8 @@ enum MusicControlButton: String, CaseIterable, Identifiable, Codable, Defaults.S
 
     var iconName: String {
         switch self {
+        case .favorite:
+            return "heart"
         case .shuffle:
             return "shuffle"
         case .trackBackward:
@@ -155,6 +161,8 @@ extension Array where Element == MusicControlButton {
 extension MusicControlButton {
     init(auxiliaryControl: MusicAuxiliaryControl) {
         switch auxiliaryControl {
+        case .favorite:
+            self = .favorite
         case .shuffle:
             self = .shuffle
         case .repeatMode:

@@ -607,6 +607,14 @@ struct MusicControlsView: View {
             ) {
                 musicManager.seek(by: seekInterval)
             }
+        case .favorite:
+            HoverButton(
+                icon: musicManager.isFavorited ? "heart.fill" : "heart",
+                iconColor: musicManager.isFavorited ? brandAccentColor : .white,
+                scale: .medium
+            ) {
+                musicManager.toggleFavorite()
+            }
         case .shuffle:
             HoverButton(
                 icon: "shuffle",

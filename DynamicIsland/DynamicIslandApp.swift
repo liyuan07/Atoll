@@ -561,6 +561,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         Defaults.Keys.migrateProgressBarStyle()
         Defaults.Keys.migrateMusicAuxControls()
         Defaults.Keys.migrateMusicControlSlots()
+        Defaults.Keys.addFavoriteMusicControlIfNeeded()
         Defaults.Keys.migrateCapsLockTintMode()
         Defaults.Keys.migrateThirdPartyDDCIntegration()
 

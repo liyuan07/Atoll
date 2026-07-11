@@ -263,6 +263,8 @@ private struct ScrollHintIndicator: View {
 
     private func previewIconColor(for slot: MusicControlButton) -> Color {
         switch slot {
+        case .favorite:
+            return musicManager.isFavorited ? .red : .primary
         case .shuffle:
             return musicManager.isShuffled ? .red : .primary
         case .repeatMode:

@@ -233,6 +233,7 @@ final class NowPlayingController: ObservableObject, MediaControllerProtocol {
         } else {
             newPlaybackState.repeatMode = self.playbackState.repeatMode
         }
+        newPlaybackState.isFavorited = payload.isLiked ?? (diff ? self.playbackState.isFavorited : nil)
 
         if let artworkDataString = payload.artworkData {
             newPlaybackState.artwork = Data(
@@ -276,6 +277,7 @@ struct NowPlayingPayload: Codable {
     let elapsedTime: Double?
     let shuffleMode: Int?
     let repeatMode: Int?
+    let isLiked: Bool?
     let artworkData: String?
     let timestamp: String?
     let playbackRate: Double?

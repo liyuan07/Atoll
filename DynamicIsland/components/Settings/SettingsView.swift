@@ -787,7 +787,7 @@ struct SettingsView: View {
             SettingsSearchEntry(tab: .media, title: "Enable album art parallax effect", keywords: ["parallax", "parallax effect", "album art"], highlightID: SettingsTab.media.highlightID(for: "Enable album art parallax effect")),
 
             // Calendar
-            SettingsSearchEntry(tab: .calendar, title: "Show calendar", keywords: ["calendar", "events"], highlightID: SettingsTab.calendar.highlightID(for: "Show calendar")),
+            SettingsSearchEntry(tab: .calendar, title: "Show calendar in notch", keywords: ["calendar", "events", "notch", "home"], highlightID: SettingsTab.calendar.highlightID(for: "Show calendar in notch")),
             SettingsSearchEntry(tab: .calendar, title: "Enable reminder live activity", keywords: ["reminder", "live activity"], highlightID: SettingsTab.calendar.highlightID(for: "Enable reminder live activity")),
             SettingsSearchEntry(tab: .calendar, title: "Countdown style", keywords: ["reminder countdown"], highlightID: SettingsTab.calendar.highlightID(for: "Countdown style")),
             SettingsSearchEntry(tab: .calendar, title: "Show lock screen reminder", keywords: ["lock screen", "reminder widget"], highlightID: SettingsTab.calendar.highlightID(for: "Show lock screen reminder")),
@@ -3180,9 +3180,13 @@ struct CalendarSettings: View {
                 }
 
                 Defaults.Toggle(key: .showCalendar) {
-                    Text("Show calendar")
+                    Text("Show calendar in notch")
                 }
-                .settingsHighlight(id: highlightID("Show calendar"))
+                .settingsHighlight(id: highlightID("Show calendar in notch"))
+
+                Text("Turn this off to remove the calendar and today's schedule from the notch home view.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
 
                 Section(header: Text("Event List")) {
                     Toggle("Hide completed reminders", isOn: $hideCompletedReminders)

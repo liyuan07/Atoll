@@ -128,6 +128,12 @@ class AppleMusicController: MediaControllerProtocol {
         try? await Task.sleep(for: .milliseconds(150))
         await updatePlaybackInfo()
     }
+
+    func toggleFavorite() async {
+        await executeCommand("set favorited of current track to not (favorited of current track)")
+        try? await Task.sleep(for: .milliseconds(150))
+        await updatePlaybackInfo()
+    }
     
     func isActive() -> Bool {
         let runningApps = NSWorkspace.shared.runningApplications
@@ -148,6 +154,7 @@ class AppleMusicController: MediaControllerProtocol {
         updatedState.isShuffled = descriptor.atIndex(7)?.booleanValue ?? false
         let repeatModeValue = descriptor.atIndex(8)?.int32Value ?? 0
         updatedState.repeatMode = RepeatMode(rawValue: Int(repeatModeValue)) ?? .off
+        updatedState.isFavorited = descriptor.atIndex(10)?.booleanValue
 
         // AppleScript returns artwork data for library tracks. For streamed
         // content not in the library it returns an empty descriptor, so we
@@ -244,9 +251,14 @@ class AppleMusicController: MediaControllerProtocol {
                     set artData to raw data of artwork 1 of current track
                 end try
 
-                return {playerState, currentTrackName, currentTrackArtist, currentTrackAlbum, trackPosition, trackDuration, shuffleState, repeatValue, artData}
+                set favoriteState to false
+                try
+                    set favoriteState to favorited of current track
+                end try
+
+                return {playerState, currentTrackName, currentTrackArtist, currentTrackAlbum, trackPosition, trackDuration, shuffleState, repeatValue, artData, favoriteState}
             on error
-                return {false, "Not Playing", "Unknown", "Unknown", 0, 0, false, 0, ""}
+                return {false, "Not Playing", "Unknown", "Unknown", 0, 0, false, 0, "", false}
             end try
         end tell
         """
