@@ -1,0 +1,53 @@
+# macOS
+.DS_Store
+
+# Xcode user state and local settings
+xcuserdata/
+*.xcuserdatad/
+*.xcuserstate
+*.xccheckout
+*.xcscmblueprint
+*.moved-aside
+*.pbxuser
+!default.pbxuser
+*.mode1v3
+!default.mode1v3
+*.mode2v3
+!default.mode2v3
+*.perspectivev3
+!default.perspectivev3
+*.xcsettings
+
+# Swift Package Manager and Xcode build products
+.build/
+.swiftpm/
+DerivedData/
+build/
+*.app
+*.ipa
+*.xcarchive
+*.dSYM
+*.dSYM.zip
+
+# Dependency-manager build products
+Pods/
+Carthage/Build/
+
+# Locally generated helper binaries and frameworks
+/Contents/Helpers/NowPlayingTestClient
+/Frameworks/*.framework/
+/mediaremote-adapter/*.framework/
+
+# Temporary files and local editor configuration
+*.swp
+*.swo
+*.tmp
+*.log
+.vscode/
+.idea/
+
+# Fastlane output
+fastlane/report.xml
+fastlane/Preview.html
+fastlane/screenshots/
+fastlane/test_output/
