@@ -7349,20 +7349,21 @@ struct ClipboardSettings: View {
                     .settingsHighlight(id: highlightID("Display Mode"))
 
                     HStack {
-                        Text("History Limit")
+                        Text("History Size")
                         Spacer()
-                        TextField("10–1000", value: $clipboardHistorySize, format: .number)
-                            .multilineTextAlignment(.trailing)
-                            .frame(width: 72)
-                        Text("items")
-                            .foregroundColor(.secondary)
+                        Picker("", selection: $clipboardHistorySize) {
+                            Text("10 items").tag(10)
+                            Text("50 items").tag(50)
+                            Text("100 items").tag(100)
+                            Text("200 items").tag(200)
+                            Text("500 items").tag(500)
+                            Text("1000 items").tag(1000)
+                        }
+                        .pickerStyle(.menu)
+                        .frame(minWidth: 100)
                     }
                     .settingsHighlight(id: highlightID("History Size"))
                     .onChange(of: clipboardHistorySize) { _, newValue in
-                        let clampedValue = min(max(newValue, 1), 1_000)
-                        if clampedValue != newValue {
-                            clipboardHistorySize = clampedValue
-                        }
                         clipboardManager.applyHistoryLimit()
                     }
 

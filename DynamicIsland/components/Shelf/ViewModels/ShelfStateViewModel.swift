@@ -73,6 +73,17 @@ final class ShelfStateViewModel: ObservableObject {
         ExtensionRPCServer.shared.notifyShelfItemsChanged(itemIDs: [item.id.uuidString], action: "removed")
     }
 
+    func move(itemID: ShelfItem.ID, before destinationID: ShelfItem.ID) {
+        guard itemID != destinationID,
+              let sourceIndex = items.firstIndex(where: { $0.id == itemID }) else { return }
+
+        var reorderedItems = items
+        let item = reorderedItems.remove(at: sourceIndex)
+        guard let destinationIndex = reorderedItems.firstIndex(where: { $0.id == destinationID }) else { return }
+        reorderedItems.insert(item, at: destinationIndex)
+        items = reorderedItems
+    }
+
     func updateBookmark(for item: ShelfItem, bookmark: Data) {
         guard let idx = items.firstIndex(where: { $0.id == item.id }) else { return }
         if case .file = items[idx].kind {

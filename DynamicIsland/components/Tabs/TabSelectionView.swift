@@ -24,6 +24,7 @@ import AtollExtensionKit
 import SwiftUI
 import Defaults
 import AppKit
+import UniformTypeIdentifiers
 
 struct TabModel: Identifiable {
     let id: String
@@ -62,6 +63,8 @@ struct TabSelectionView: View {
     @Default(.showMirror) private var showMirror
     @Default(.showStandardMediaControls) private var showStandardMediaControls
     @Default(.enableMinimalisticUI) private var enableMinimalisticUI
+    @Default(.notchTabOrder) private var notchTabOrder
+    @Default(.hiddenNotchTabIDs) private var hiddenNotchTabIDs
     @Namespace var animation
     
     private var tabs: [TabModel] {
@@ -109,7 +112,7 @@ struct TabSelectionView: View {
                 )
             }
         }
-        return tabsArray
+        return applySavedLayout(to: tabsArray)
     }
     var body: some View {
         HStack(spacing: 24) {
@@ -125,6 +128,17 @@ struct TabSelectionView: View {
                     coordinator.currentView = tab.view
                 }
                 .frame(height: 26)
+                .onDrag {
+                    NSItemProvider(object: tab.id as NSString)
+                }
+                .onDrop(of: [.plainText], isTargeted: nil) { providers in
+                    moveTab(from: providers, before: tab.id)
+                }
+                .contextMenu {
+                    Button("Hide from Tab Bar", role: .destructive) {
+                        hideTab(tab)
+                    }
+                }
                 .foregroundStyle(isSelected ? activeAccent : .gray)
                 .background {
                     if isSelected {
@@ -145,6 +159,18 @@ struct TabSelectionView: View {
         }
         .animation(.smooth(duration: 0.3), value: coordinator.currentView)
         .clipShape(Capsule())
+        .contextMenu {
+            Button("Restore Hidden Tabs") {
+                hiddenNotchTabIDs.removeAll()
+                ensureValidSelection(with: tabs)
+            }
+            .disabled(hiddenNotchTabIDs.isEmpty)
+
+            Button("Reset Tab Order") {
+                notchTabOrder.removeAll()
+            }
+            .disabled(notchTabOrder.isEmpty)
+        }
         .onAppear {
             ensureValidSelection(with: tabs)
         }
@@ -171,6 +197,39 @@ struct TabSelectionView: View {
                 && coordinator.selectedExtensionExperienceID == tab.experienceID
         }
         return coordinator.currentView == tab.view
+    }
+
+    private func applySavedLayout(to availableTabs: [TabModel]) -> [TabModel] {
+        let visibleTabs = availableTabs.filter { !hiddenNotchTabIDs.contains($0.id) }
+        let tabsByID = Dictionary(uniqueKeysWithValues: visibleTabs.map { ($0.id, $0) })
+        let orderedTabs = notchTabOrder.compactMap { tabsByID[$0] }
+        let unorderedTabs = visibleTabs.filter { !notchTabOrder.contains($0.id) }
+        return orderedTabs + unorderedTabs
+    }
+
+    private func moveTab(from providers: [NSItemProvider], before destinationID: String) -> Bool {
+        guard let provider = providers.first else { return false }
+
+        provider.loadObject(ofClass: NSString.self) { object, _ in
+            guard let sourceID = (object as? NSString).map(String.init), sourceID != destinationID else { return }
+
+            DispatchQueue.main.async {
+                var orderedIDs = tabs.map(\.id)
+                guard let sourceIndex = orderedIDs.firstIndex(of: sourceID) else { return }
+
+                orderedIDs.remove(at: sourceIndex)
+                guard let destinationIndex = orderedIDs.firstIndex(of: destinationID) else { return }
+                orderedIDs.insert(sourceID, at: destinationIndex)
+                notchTabOrder = orderedIDs
+            }
+        }
+        return true
+    }
+
+    private func hideTab(_ tab: TabModel) {
+        guard !hiddenNotchTabIDs.contains(tab.id) else { return }
+        hiddenNotchTabIDs.append(tab.id)
+        ensureValidSelection(with: tabs)
     }
 
     private func ensureValidSelection(with tabs: [TabModel]) {

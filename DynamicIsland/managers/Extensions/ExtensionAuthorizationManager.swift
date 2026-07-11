@@ -42,6 +42,30 @@ final class ExtensionAuthorizationManager: ObservableObject {
     var areLockScreenWidgetsEnabled: Bool { Defaults[.enableExtensionLockScreenWidgets] }
     var areNotchExperiencesEnabled: Bool { Defaults[.enableExtensionNotchExperiences] }
 
+    func isExtensionEnabled(bundleIdentifier: String) -> Bool {
+        !Defaults[.disabledExtensionBundleIdentifiers].contains(bundleIdentifier)
+    }
+
+    func setExtensionEnabled(bundleIdentifier: String, enabled: Bool) {
+        var disabledBundleIdentifiers = Defaults[.disabledExtensionBundleIdentifiers]
+
+        if enabled {
+            disabledBundleIdentifiers.removeAll { $0 == bundleIdentifier }
+        } else if !disabledBundleIdentifiers.contains(bundleIdentifier) {
+            disabledBundleIdentifiers.append(bundleIdentifier)
+        }
+
+        Defaults[.disabledExtensionBundleIdentifiers] = disabledBundleIdentifiers
+
+        if !enabled {
+            ExtensionLiveActivityManager.shared.dismissAll(for: bundleIdentifier)
+            ExtensionLockScreenWidgetManager.shared.dismissAll(for: bundleIdentifier)
+            ExtensionNotchExperienceManager.shared.dismissAll(for: bundleIdentifier)
+        }
+
+        objectWillChange.send()
+    }
+
     func updateFeatureToggles(extensionsEnabled: Bool? = nil,
                               liveActivitiesEnabled: Bool? = nil,
                               lockScreenWidgetsEnabled: Bool? = nil,
@@ -198,6 +222,7 @@ final class ExtensionAuthorizationManager: ObservableObject {
 
     private func preflight(bundleIdentifier: String, scope: ExtensionPermissionScope) -> Bool {
         guard isExtensionsFeatureEnabled else { return false }
+        guard isExtensionEnabled(bundleIdentifier: bundleIdentifier) else { return false }
         guard let entry = authorizationEntry(for: bundleIdentifier) else { return false }
         guard entry.isAuthorized else { return false }
         guard entry.allowedScopes.contains(scope) else { return false }

@@ -197,6 +197,17 @@ private struct ExtensionEntryRow: View {
                 }
                 
                 Spacer()
+
+                Toggle("Enable in Atoll", isOn: Binding(
+                    get: { authManager.isExtensionEnabled(bundleIdentifier: entry.bundleIdentifier) },
+                    set: { enabled in
+                        authManager.setExtensionEnabled(bundleIdentifier: entry.bundleIdentifier, enabled: enabled)
+                    }
+                ))
+                .labelsHidden()
+                .toggleStyle(.switch)
+                .disabled(!entry.isAuthorized)
+                .help("Show or hide this extension in Atoll without removing its authorization")
                 
                 // Expand button
                 Button {

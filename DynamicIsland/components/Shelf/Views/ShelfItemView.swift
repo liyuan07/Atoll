@@ -23,6 +23,7 @@
 import AppKit
 import SwiftUI
 import Defaults
+import UniformTypeIdentifiers
 
 import QuickLook
 
@@ -35,6 +36,10 @@ struct ShelfItemView: View {
     @State private var showStack = false
     @State private var cachedPreviewImage: NSImage?
     @State private var debouncedDropTarget = false
+    @State private var isHovering = false
+    @State private var isReorderTargeted = false
+
+    private static let shelfItemDragType = UTType(exportedAs: "com.atoll.shelf-item")
 
     private var isSelected: Bool { viewModel.isSelected }
     private var shouldHideDuringDrag: Bool { selection.isDragging && selection.isSelected(item.id) && false }
@@ -103,6 +108,30 @@ struct ShelfItemView: View {
             Task {
                 cachedPreviewImage = await renderDragPreview()
             }
+        }
+        .overlay(alignment: .topTrailing) {
+            if isHovering {
+                Button {
+                    ShelfStateViewModel.shared.remove(item)
+                } label: {
+                    Image(systemName: "xmark.circle.fill")
+                        .font(.system(size: 15, weight: .semibold))
+                        .foregroundStyle(.white, .red)
+                        .shadow(color: .black.opacity(0.35), radius: 2)
+                }
+                .buttonStyle(.plain)
+                .help("Remove from Shelf")
+                .padding(3)
+            }
+        }
+        .onHover { isHovering = $0 }
+        .overlay {
+            RoundedRectangle(cornerRadius: 12, style: .continuous)
+                .stroke(Color.accentColor, lineWidth: 2)
+                .opacity(isReorderTargeted ? 1 : 0)
+        }
+        .onDrop(of: [Self.shelfItemDragType], isTargeted: $isReorderTargeted) { providers in
+            reorderShelfItem(from: providers)
         }
         .quickLookPresenter(using: quickLookService)
     }
@@ -178,6 +207,21 @@ struct ShelfItemView: View {
         let renderer = ImageRenderer(content: content)
         renderer.scale = NSScreen.main?.backingScaleFactor ?? 2.0
         return renderer.nsImage ?? (viewModel.thumbnail ?? item.icon)
+    }
+
+    private func reorderShelfItem(from providers: [NSItemProvider]) -> Bool {
+        guard let provider = providers.first else { return false }
+
+        provider.loadDataRepresentation(forTypeIdentifier: Self.shelfItemDragType.identifier) { data, _ in
+            guard let data,
+                  let identifier = String(data: data, encoding: .utf8),
+                  let itemID = UUID(uuidString: identifier) else { return }
+
+            DispatchQueue.main.async {
+                ShelfStateViewModel.shared.move(itemID: itemID, before: item.id)
+            }
+        }
+        return true
     }
 
     
@@ -337,6 +381,7 @@ private struct DraggableClickHandler<Content: View>: NSViewRepresentable {
         
         private func createPasteboardItem(for item: ShelfItem) -> NSPasteboardItem? {
             let pasteboardItem = NSPasteboardItem()
+            pasteboardItem.setString(item.id.uuidString, forType: NSPasteboard.PasteboardType("com.atoll.shelf-item"))
 
             switch item.kind {
             case .file:
