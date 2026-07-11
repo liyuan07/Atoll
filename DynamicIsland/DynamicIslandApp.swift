@@ -442,6 +442,9 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         } else if coordinator.currentView == .notes || coordinator.currentView == .clipboard {
             let preferredHeight = coordinator.notesLayoutState.preferredHeight
             baseSize.height = max(baseSize.height, preferredHeight)
+        } else if coordinator.currentView == .extensionExperience,
+                  let preferredHeight = extensionTabPreferredHeight(baseHeight: baseSize.height) {
+            baseSize.height = preferredHeight
         } else if coordinator.currentView == .terminal {
             let screenHeight = NSScreen.main?.visibleFrame.height ?? 800
             let maxFraction = Defaults[.terminalMaxHeightFraction]
@@ -459,6 +462,26 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         )
 
         return result
+    }
+
+    private func extensionTabPreferredHeight(baseHeight: CGFloat) -> CGFloat? {
+        guard Defaults[.enableThirdPartyExtensions],
+              Defaults[.enableExtensionNotchExperiences],
+              Defaults[.enableExtensionNotchTabs] else {
+            return nil
+        }
+
+        let manager = ExtensionNotchExperienceManager.shared
+        let payload: ExtensionNotchExperiencePayload?
+        if let selectedID = coordinator.selectedExtensionExperienceID {
+            payload = manager.payload(experienceID: selectedID)
+        } else {
+            payload = manager.highestPriorityTabPayload()
+        }
+
+        guard let preferredHeight = payload?.descriptor.tab?.preferredHeight else { return nil }
+        let maxHeight = baseHeight + statsSecondRowContentHeight + statsGridSpacingHeight
+        return min(max(preferredHeight, baseHeight), maxHeight)
     }
 
     /// Adjusts a base notch size for a specific screen by adding Dynamic Island

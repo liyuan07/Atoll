@@ -26,6 +26,53 @@ import Defaults
 import AppKit
 import UniformTypeIdentifiers
 
+@MainActor
+private final class TabDragSession: ObservableObject {
+    private weak var viewModel: DynamicIslandViewModel?
+    private var token: UUID?
+    private var localMouseUpMonitor: Any?
+    private var globalMouseUpMonitor: Any?
+
+    func begin(using viewModel: DynamicIslandViewModel) {
+        end()
+
+        let token = UUID()
+        self.token = token
+        self.viewModel = viewModel
+        viewModel.setAutoCloseSuppression(true, token: token)
+
+        localMouseUpMonitor = NSEvent.addLocalMonitorForEvents(matching: [.leftMouseUp]) { [weak self] event in
+            Task { @MainActor in
+                self?.end()
+            }
+            return event
+        }
+        globalMouseUpMonitor = NSEvent.addGlobalMonitorForEvents(matching: [.leftMouseUp]) { [weak self] _ in
+            Task { @MainActor in
+                self?.end()
+            }
+        }
+    }
+
+    func end() {
+        if let token {
+            viewModel?.setAutoCloseSuppression(false, token: token)
+        }
+        token = nil
+        viewModel = nil
+
+        if let localMouseUpMonitor {
+            NSEvent.removeMonitor(localMouseUpMonitor)
+            self.localMouseUpMonitor = nil
+        }
+        if let globalMouseUpMonitor {
+            NSEvent.removeMonitor(globalMouseUpMonitor)
+            self.globalMouseUpMonitor = nil
+        }
+    }
+
+}
+
 struct TabModel: Identifiable {
     let id: String
     let label: String
@@ -47,6 +94,7 @@ struct TabModel: Identifiable {
 }
 
 struct TabSelectionView: View {
+    @EnvironmentObject private var vm: DynamicIslandViewModel
     @ObservedObject var coordinator = DynamicIslandViewCoordinator.shared
     @ObservedObject private var extensionNotchExperienceManager = ExtensionNotchExperienceManager.shared
     @StateObject private var quickShareService = QuickShareService.shared
@@ -66,6 +114,9 @@ struct TabSelectionView: View {
     @Default(.notchTabOrder) private var notchTabOrder
     @Default(.hiddenNotchTabIDs) private var hiddenNotchTabIDs
     @Namespace var animation
+    @StateObject private var tabDragSession = TabDragSession()
+
+    private static let tabDragType = UTType(exportedAs: "com.atoll.notch-tab")
     
     private var tabs: [TabModel] {
         var tabsArray: [TabModel] = []
@@ -129,9 +180,9 @@ struct TabSelectionView: View {
                 }
                 .frame(height: 26)
                 .onDrag {
-                    NSItemProvider(object: tab.id as NSString)
+                    tabDragProvider(for: tab)
                 }
-                .onDrop(of: [.plainText], isTargeted: nil) { providers in
+                .onDrop(of: [Self.tabDragType], isTargeted: nil) { providers in
                     moveTab(from: providers, before: tab.id)
                 }
                 .contextMenu {
@@ -174,6 +225,9 @@ struct TabSelectionView: View {
         .onAppear {
             ensureValidSelection(with: tabs)
         }
+        .onDisappear {
+            tabDragSession.end()
+        }
     }
 
     private var extensionTabsEnabled: Bool {
@@ -210,8 +264,10 @@ struct TabSelectionView: View {
     private func moveTab(from providers: [NSItemProvider], before destinationID: String) -> Bool {
         guard let provider = providers.first else { return false }
 
-        provider.loadObject(ofClass: NSString.self) { object, _ in
-            guard let sourceID = (object as? NSString).map(String.init), sourceID != destinationID else { return }
+        provider.loadDataRepresentation(forTypeIdentifier: Self.tabDragType.identifier) { data, _ in
+            guard let data,
+                  let sourceID = String(data: data, encoding: .utf8),
+                  sourceID != destinationID else { return }
 
             DispatchQueue.main.async {
                 var orderedIDs = tabs.map(\.id)
@@ -221,9 +277,24 @@ struct TabSelectionView: View {
                 guard let destinationIndex = orderedIDs.firstIndex(of: destinationID) else { return }
                 orderedIDs.insert(sourceID, at: destinationIndex)
                 notchTabOrder = orderedIDs
+                tabDragSession.end()
             }
         }
         return true
+    }
+
+    private func tabDragProvider(for tab: TabModel) -> NSItemProvider {
+        guard NSEvent.modifierFlags.contains(.command) else {
+            return NSItemProvider()
+        }
+
+        tabDragSession.begin(using: vm)
+        let provider = NSItemProvider()
+        provider.registerDataRepresentation(forTypeIdentifier: Self.tabDragType.identifier, visibility: .all) { completion in
+            completion(Data(tab.id.utf8), nil)
+            return nil
+        }
+        return provider
     }
 
     private func hideTab(_ tab: TabModel) {

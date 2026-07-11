@@ -360,11 +360,37 @@ class DynamicIslandViewModel: NSObject, ObservableObject {
             return adjustedSize
         }
 
+        if coordinator.currentView == .extensionExperience,
+           let preferredHeight = extensionTabPreferredHeight(baseHeight: adjustedSize.height) {
+            adjustedSize.height = preferredHeight
+            return adjustedSize
+        }
+
         return statsAdjustedNotchSize(
             from: adjustedSize,
             isStatsTabActive: coordinator.currentView == .stats,
             secondRowProgress: coordinator.statsSecondRowExpansion
         )
+    }
+
+    private func extensionTabPreferredHeight(baseHeight: CGFloat) -> CGFloat? {
+        guard Defaults[.enableThirdPartyExtensions],
+              Defaults[.enableExtensionNotchExperiences],
+              Defaults[.enableExtensionNotchTabs] else {
+            return nil
+        }
+
+        let manager = ExtensionNotchExperienceManager.shared
+        let payload: ExtensionNotchExperiencePayload?
+        if let selectedID = coordinator.selectedExtensionExperienceID {
+            payload = manager.payload(experienceID: selectedID)
+        } else {
+            payload = manager.highestPriorityTabPayload()
+        }
+
+        guard let preferredHeight = payload?.descriptor.tab?.preferredHeight else { return nil }
+        let maxHeight = baseHeight + statsSecondRowContentHeight + statsGridSpacingHeight
+        return min(max(preferredHeight, baseHeight), maxHeight)
     }
 
     func close() {

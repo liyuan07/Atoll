@@ -850,7 +850,7 @@ struct ContentView: View {
 
     @ViewBuilder
       func NotchLayout() -> some View {
-          VStack(alignment: .leading) {
+          VStack(alignment: .leading, spacing: coordinator.currentView == .extensionExperience ? 0 : 8) {
               VStack(alignment: .leading) {
                   if coordinator.firstLaunch {
                       Spacer()
