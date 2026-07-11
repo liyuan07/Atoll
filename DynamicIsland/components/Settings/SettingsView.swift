@@ -898,7 +898,8 @@ struct SettingsView: View {
             SettingsSearchEntry(tab: .clipboard, title: "Enable Clipboard Manager", keywords: ["clipboard", "manager"], highlightID: SettingsTab.clipboard.highlightID(for: "Enable Clipboard Manager")),
             SettingsSearchEntry(tab: .clipboard, title: "Show Clipboard Icon", keywords: ["icon", "clipboard"], highlightID: SettingsTab.clipboard.highlightID(for: "Show Clipboard Icon")),
             SettingsSearchEntry(tab: .clipboard, title: "Display Mode", keywords: ["list", "grid", "clipboard"], highlightID: SettingsTab.clipboard.highlightID(for: "Display Mode")),
-            SettingsSearchEntry(tab: .clipboard, title: "History Size", keywords: ["history", "clipboard"], highlightID: SettingsTab.clipboard.highlightID(for: "History Size")),
+            SettingsSearchEntry(tab: .clipboard, title: "Auto Expiration", keywords: ["history", "clipboard", "cleanup", "days"], highlightID: SettingsTab.clipboard.highlightID(for: "Auto Expiration")),
+            SettingsSearchEntry(tab: .clipboard, title: "Maximum Items", keywords: ["history", "clipboard", "limit", "database"], highlightID: SettingsTab.clipboard.highlightID(for: "Maximum Items")),
 
             // Screen Assistant
             SettingsSearchEntry(tab: .screenAssistant, title: "Enable Screen Assistant", keywords: ["screen assistant", "ai"], highlightID: SettingsTab.screenAssistant.highlightID(for: "Enable Screen Assistant")),
@@ -7305,6 +7306,7 @@ struct ClipboardSettings: View {
     @ObservedObject var clipboardManager = ClipboardManager.shared
     @Default(.enableClipboardManager) var enableClipboardManager
     @Default(.clipboardHistorySize) var clipboardHistorySize
+    @Default(.clipboardExpirationDays) var clipboardExpirationDays
     @Default(.showClipboardIcon) var showClipboardIcon
     @Default(.clipboardDisplayMode) var clipboardDisplayMode
 
@@ -7352,45 +7354,6 @@ struct ClipboardSettings: View {
                     }
                     .settingsHighlight(id: highlightID("Display Mode"))
 
-                    HStack {
-                        Text("History Size")
-                        Spacer()
-                        Picker("", selection: $clipboardHistorySize) {
-                            Text("10 items").tag(10)
-                            Text("50 items").tag(50)
-                            Text("100 items").tag(100)
-                            Text("200 items").tag(200)
-                            Text("500 items").tag(500)
-                            Text("1000 items").tag(1000)
-                        }
-                        .pickerStyle(.menu)
-                        .frame(minWidth: 100)
-                    }
-                    .settingsHighlight(id: highlightID("History Size"))
-                    .onChange(of: clipboardHistorySize) { _, newValue in
-                        clipboardManager.applyHistoryLimit()
-                    }
-
-                    HStack {
-                        Text("Current Items")
-                        Spacer()
-                        Text("\(clipboardManager.clipboardHistory.count)")
-                            .foregroundColor(.secondary)
-                    }
-
-                    HStack {
-                        Text("Pinned Items")
-                        Spacer()
-                        Text("\(clipboardManager.pinnedItems.count)")
-                            .foregroundColor(.secondary)
-                    }
-
-                    HStack {
-                        Text("Monitoring Status")
-                        Spacer()
-                        Text(clipboardManager.isMonitoring ? "Active" : "Stopped")
-                            .foregroundColor(clipboardManager.isMonitoring ? .green : .secondary)
-                    }
                 } header: {
                     Text("Settings")
                 } footer: {
@@ -7402,6 +7365,57 @@ struct ClipboardSettings: View {
                     case .separateTab:
                         Text("Separate Tab mode integrates Copied Items and Notes into a single view. If both are enabled, Notes appear on the right and Clipboard on the left.")
                     }
+                }
+
+                Section {
+                    HStack(alignment: .top) {
+                        VStack(alignment: .leading, spacing: 4) {
+                            Text("Auto Expiration")
+                            Text("Items older than this are cleaned up in the background at launch. Pinned favorites never expire.")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        }
+                        Spacer()
+                        Picker("", selection: $clipboardExpirationDays) {
+                            Text("Never").tag(0)
+                            Text("1 day").tag(1)
+                            Text("7 days").tag(7)
+                            Text("30 days").tag(30)
+                            Text("90 days").tag(90)
+                            Text("180 days").tag(180)
+                            Text("1 year").tag(365)
+                        }
+                        .pickerStyle(.menu)
+                        .frame(width: 150)
+                    }
+                    .settingsHighlight(id: highlightID("Auto Expiration"))
+
+                    HStack(alignment: .top) {
+                        VStack(alignment: .leading, spacing: 4) {
+                            Text("Maximum Items")
+                            Text("The oldest unpinned items beyond this limit are removed during background cleanup.")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        }
+                        Spacer()
+                        Picker("", selection: $clipboardHistorySize) {
+                            Text("100").tag(100)
+                            Text("500").tag(500)
+                            Text("1000").tag(1000)
+                            Text("5000").tag(5000)
+                            Text("10000").tag(10000)
+                        }
+                        .pickerStyle(.menu)
+                        .frame(width: 150)
+                    }
+                    .settingsHighlight(id: highlightID("Maximum Items"))
+                    .onChange(of: clipboardHistorySize) { _, _ in
+                        clipboardManager.applyHistoryLimit()
+                    }
+                } header: {
+                    Text("Database")
+                } footer: {
+                    Text("Cleanup runs after launch so it does not delay Atoll startup.")
                 }
 
                 Section {

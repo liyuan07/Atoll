@@ -21,12 +21,14 @@ import Defaults
 
 struct ClipboardPopover: View {
     @ObservedObject var clipboardManager = ClipboardManager.shared
-    @State private var selectedTab: ClipboardTab = .history
+    @State private var selectedTab: ClipboardTab = .all
     @State private var searchText = ""
     @State private var hoveredItemId: UUID?
+    @State private var selectedItemID: UUID?
+    @FocusState private var isListFocused: Bool
     
     var filteredItems: [ClipboardItem] {
-        let allItems = selectedTab == .history ? clipboardManager.regularHistory : clipboardManager.pinnedItems
+        let allItems = selectedTab.items(from: clipboardManager)
         
         if searchText.isEmpty {
             return allItems
@@ -53,22 +55,30 @@ struct ClipboardPopover: View {
             if filteredItems.isEmpty {
                 ClipboardPopoverEmptyState(
                     hasSearch: !searchText.isEmpty,
-                    isHistoryTab: selectedTab == .history
+                    selectedTab: selectedTab
                 )
             } else {
-                ScrollView {
-                    LazyVStack(spacing: 1) {
-                        ForEach(filteredItems) { item in
-                            ClipboardPopoverItemRow(
-                                item: item,
-                                isHovered: hoveredItemId == item.id,
-                                isPinned: clipboardManager.pinnedItems.contains(where: { $0.id == item.id })
-                            ) { hoverId in
-                                hoveredItemId = hoverId
+                ScrollViewReader { proxy in
+                    ScrollView {
+                        LazyVStack(spacing: 1) {
+                            ForEach(filteredItems) { item in
+                                ClipboardPopoverItemRow(
+                                    item: item,
+                                    isHovered: hoveredItemId == item.id,
+                                    isSelected: selectedItemID == item.id,
+                                    isPinned: clipboardManager.pinnedItems.contains(where: { $0.id == item.id })
+                                ) { hoverId in
+                                    hoveredItemId = hoverId
+                                }
+                                .id(item.id)
                             }
                         }
+                        .padding(.vertical, 8)
                     }
-                    .padding(.vertical, 8)
+                    .onChange(of: selectedItemID) { _, itemID in
+                        guard let itemID else { return }
+                        proxy.scrollTo(itemID, anchor: .center)
+                    }
                 }
             }
         }
@@ -78,6 +88,17 @@ struct ClipboardPopover: View {
                 .fill(.regularMaterial)
                 .shadow(color: .black.opacity(0.2), radius: 8, x: 0, y: 4)
         )
+        .focusable()
+        .focused($isListFocused)
+        .onMoveCommand { direction in
+            selectedItemID = movedClipboardSelection(from: selectedItemID, direction: direction, items: filteredItems)
+        }
+        .onAppear {
+            selectedItemID = filteredItems.first?.id
+            isListFocused = true
+        }
+        .onChange(of: selectedTab) { _, _ in selectedItemID = filteredItems.first?.id }
+        .onChange(of: searchText) { _, _ in selectedItemID = filteredItems.first?.id }
     }
 }
 
@@ -103,18 +124,14 @@ struct ClipboardPopoverHeader: View {
                 
                 // Clear button
                 Button(action: {
-                    if selectedTab == .history {
-                        clipboardManager.clearHistory()
-                    } else {
-                        clipboardManager.clearPinnedItems()
-                    }
+                    clipboardManager.clearItems(in: selectedTab)
                 }) {
                     Image(systemName: "trash")
                         .foregroundColor(.red)
                         .font(.system(size: 11))
                 }
                 .buttonStyle(PlainButtonStyle())
-                .disabled(selectedTab == .history ? clipboardManager.clipboardHistory.isEmpty : clipboardManager.pinnedItems.isEmpty)
+                .disabled(selectedTab.items(from: clipboardManager).isEmpty)
             }
             .padding(.horizontal, 14)
             .padding(.top, 10)
@@ -167,11 +184,11 @@ struct ClipboardPopoverHeader: View {
 
 struct ClipboardPopoverEmptyState: View {
     let hasSearch: Bool
-    let isHistoryTab: Bool
+    let selectedTab: ClipboardTab
     
     var body: some View {
         VStack(spacing: 10) {
-            Image(systemName: hasSearch ? "magnifyingglass" : (isHistoryTab ? "doc.on.clipboard" : "heart.fill"))
+            Image(systemName: hasSearch ? "magnifyingglass" : selectedTab.icon)
                 .font(.system(size: 24))
                 .foregroundColor(.secondary)
             
@@ -184,11 +201,11 @@ struct ClipboardPopoverEmptyState: View {
                     .font(.system(size: 10))
                     .foregroundColor(.secondary)
             } else {
-                Text(isHistoryTab ? "No clipboard history" : "No favorites")
+                Text("No \(selectedTab.localizedName.lowercased()) items")
                     .font(.system(size: 12, weight: .medium))
                     .foregroundColor(.primary)
                 
-                Text(isHistoryTab ? "Copy something to start" : "Pin items to add favorites")
+                Text(selectedTab == .favorites ? "Pin items to add favorites" : "Copy something to start")
                     .font(.system(size: 10))
                     .foregroundColor(.secondary)
             }
@@ -201,6 +218,7 @@ struct ClipboardPopoverEmptyState: View {
 struct ClipboardPopoverItemRow: View {
     let item: ClipboardItem
     let isHovered: Bool
+    let isSelected: Bool
     let isPinned: Bool
     let onHover: (UUID?) -> Void
     @ObservedObject var clipboardManager = ClipboardManager.shared
@@ -283,7 +301,7 @@ struct ClipboardPopoverItemRow: View {
         .padding(.vertical, 6)
         .background(
             RoundedRectangle(cornerRadius: 4)
-                .fill(isHovered ? Color.gray.opacity(0.1) : Color.clear)
+                .fill(isSelected ? Color.accentColor.opacity(0.22) : (isHovered ? Color.gray.opacity(0.1) : Color.clear))
         )
         .onHover { hovering in
             withAnimation(.easeInOut(duration: 0.15)) {

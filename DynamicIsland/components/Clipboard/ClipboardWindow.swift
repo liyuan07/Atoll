@@ -21,7 +21,7 @@ import Defaults
 
 struct ClipboardWindow: View {
     @ObservedObject var clipboardManager = ClipboardManager.shared
-    @State private var selectedTab: ClipboardTab = .history
+    @State private var selectedTab: ClipboardTab = .all
     @State private var searchText = ""
     
     var body: some View {
@@ -63,19 +63,14 @@ struct ClipboardWindowHeader: View {
                 
                 // Clear button
                 Button(action: {
-                    if selectedTab == .history {
-                        clipboardManager.clearHistory()
-                    } else {
-                        // Clear favorites
-                        clipboardManager.clearPinnedItems()
-                    }
+                    clipboardManager.clearItems(in: selectedTab)
                 }) {
                     Image(systemName: "trash")
                         .foregroundColor(.red)
                         .font(.system(size: 12))
                 }
                 .buttonStyle(PlainButtonStyle())
-                .disabled(selectedTab == .history ? clipboardManager.clipboardHistory.isEmpty : clipboardManager.pinnedItems.isEmpty)
+                .disabled(selectedTab.items(from: clipboardManager).isEmpty)
             }
             .padding(.horizontal, 16)
             .padding(.vertical, 12)
@@ -128,9 +123,11 @@ struct ClipboardWindowContent: View {
     let selectedTab: ClipboardTab
     let searchText: String
     @ObservedObject var clipboardManager = ClipboardManager.shared
+    @State private var selectedItemID: UUID?
+    @FocusState private var isListFocused: Bool
     
     var filteredItems: [ClipboardItem] {
-        let items = selectedTab == .history ? clipboardManager.regularHistory : clipboardManager.pinnedItems
+        let items = selectedTab.items(from: clipboardManager)
         
         if searchText.isEmpty {
             return items
@@ -143,18 +140,42 @@ struct ClipboardWindowContent: View {
     }
     
     var body: some View {
-        if filteredItems.isEmpty {
-            ClipboardEmptyState(tab: selectedTab, hasSearch: !searchText.isEmpty)
-        } else {
-            ScrollView {
-                LazyVStack(spacing: 1) {
-                    ForEach(filteredItems) { item in
-                        ClipboardWindowItemRow(item: item, tab: selectedTab)
+        Group {
+            if filteredItems.isEmpty {
+                ClipboardEmptyState(tab: selectedTab, hasSearch: !searchText.isEmpty)
+            } else {
+                ScrollViewReader { proxy in
+                    ScrollView {
+                        LazyVStack(spacing: 1) {
+                            ForEach(filteredItems) { item in
+                                ClipboardWindowItemRow(
+                                    item: item,
+                                    tab: selectedTab,
+                                    isSelected: selectedItemID == item.id
+                                )
+                                .id(item.id)
+                            }
+                        }
+                        .padding(.vertical, 8)
+                    }
+                    .onChange(of: selectedItemID) { _, itemID in
+                        guard let itemID else { return }
+                        proxy.scrollTo(itemID, anchor: .center)
                     }
                 }
-                .padding(.vertical, 8)
             }
         }
+        .focusable()
+        .focused($isListFocused)
+        .onMoveCommand { direction in
+            selectedItemID = movedClipboardSelection(from: selectedItemID, direction: direction, items: filteredItems)
+        }
+        .onAppear {
+            selectedItemID = filteredItems.first?.id
+            isListFocused = true
+        }
+        .onChange(of: selectedTab) { _, _ in selectedItemID = filteredItems.first?.id }
+        .onChange(of: searchText) { _, _ in selectedItemID = filteredItems.first?.id }
     }
 }
 
@@ -177,11 +198,11 @@ struct ClipboardEmptyState: View {
                     .font(.system(size: 12))
                     .foregroundColor(.secondary)
             } else {
-                Text(tab == .history ? "No clipboard history" : "No favorites")
+                Text("No \(tab.localizedName.lowercased()) items")
                     .font(.system(size: 14, weight: .medium))
                     .foregroundColor(.primary)
                 
-                Text(tab == .history ? "Copy something to get started" : "Pin items from history to save them here")
+                Text(tab == .favorites ? "Pin items from history to save them here" : "Copy something to get started")
                     .font(.system(size: 12))
                     .foregroundColor(.secondary)
                     .multilineTextAlignment(.center)
@@ -195,6 +216,7 @@ struct ClipboardEmptyState: View {
 struct ClipboardWindowItemRow: View {
     let item: ClipboardItem
     let tab: ClipboardTab
+    let isSelected: Bool
     @ObservedObject var clipboardManager = ClipboardManager.shared
     @State private var isHovering = false
     
@@ -276,7 +298,7 @@ struct ClipboardWindowItemRow: View {
         .padding(.vertical, 8)
         .background(
             RoundedRectangle(cornerRadius: 6)
-                .fill(isHovering ? Color.gray.opacity(0.1) : Color.clear)
+                .fill(isSelected ? Color.accentColor.opacity(0.22) : (isHovering ? Color.gray.opacity(0.1) : Color.clear))
         )
         .onHover { hovering in
             withAnimation(.easeInOut(duration: 0.2)) {

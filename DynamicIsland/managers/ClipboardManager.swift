@@ -216,6 +216,12 @@ class ClipboardManager: ObservableObject {
     private var maxHistoryItems: Int {
         return Defaults[.clipboardHistorySize]
     }
+
+    private var expirationDays: Int {
+        Defaults[.clipboardExpirationDays]
+    }
+
+    private var lastMaintenanceDate = Date.distantPast
     
     // Computed properties for filtered lists
     var regularHistory: [ClipboardItem] {
@@ -258,12 +264,21 @@ class ClipboardManager: ObservableObject {
     private init() {
         lastChangeCount = NSPasteboard.general.changeCount
         loadArchive()
-        cleanupOldFiles()
+        DispatchQueue.main.async { [weak self] in
+            self?.performDatabaseMaintenance()
+        }
 
         Defaults.publisher(.clipboardHistorySize)
             .dropFirst()
             .sink { [weak self] _ in
                 self?.applyHistoryLimit()
+            }
+            .store(in: &cancellables)
+
+        Defaults.publisher(.clipboardExpirationDays)
+            .dropFirst()
+            .sink { [weak self] _ in
+                self?.performDatabaseMaintenance()
             }
             .store(in: &cancellables)
     }
@@ -386,13 +401,30 @@ class ClipboardManager: ObservableObject {
     }
 
     func applyHistoryLimit() {
-        trimHistoryToLimit()
+        performDatabaseMaintenance()
+    }
+
+    func clearItems(in tab: ClipboardTab) {
+        if tab == .favorites {
+            clearPinnedItems()
+            return
+        }
+
+        let itemsToRemove = clipboardHistory.filter { tab.includes($0) }
+        for item in itemsToRemove {
+            deletePayloadFiles(for: item)
+        }
+        let removedIDs = Set(itemsToRemove.map(\.id))
+        clipboardHistory.removeAll { removedIDs.contains($0.id) }
         saveArchive()
     }
     
     // MARK: - Private Methods
     
     private func checkClipboard() {
+        if Date().timeIntervalSince(lastMaintenanceDate) >= 86_400 {
+            performDatabaseMaintenance()
+        }
         let currentChangeCount = NSPasteboard.general.changeCount
         
         guard currentChangeCount != lastChangeCount else { return }
@@ -565,6 +597,24 @@ class ClipboardManager: ObservableObject {
             deletePayloadFiles(for: item)
         }
         clipboardHistory = Array(clipboardHistory.prefix(limit))
+    }
+
+    private func removeExpiredItems() {
+        guard expirationDays > 0 else { return }
+        let cutoff = Calendar.current.date(byAdding: .day, value: -expirationDays, to: Date()) ?? .distantPast
+        let expiredItems = clipboardHistory.filter { $0.timestamp < cutoff }
+        for item in expiredItems {
+            deletePayloadFiles(for: item)
+        }
+        clipboardHistory.removeAll { $0.timestamp < cutoff }
+    }
+
+    private func performDatabaseMaintenance() {
+        removeExpiredItems()
+        trimHistoryToLimit()
+        cleanupOldFiles()
+        lastMaintenanceDate = Date()
+        saveArchive()
     }
 
     private func deletePayloadFiles(for item: ClipboardItem) {

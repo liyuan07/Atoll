@@ -562,6 +562,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         Defaults.Keys.migrateMusicAuxControls()
         Defaults.Keys.migrateMusicControlSlots()
         Defaults.Keys.addFavoriteMusicControlIfNeeded()
+        Defaults.Keys.migrateClipboardDatabaseSettings()
         Defaults.Keys.migrateCapsLockTintMode()
         Defaults.Keys.migrateThirdPartyDDCIntegration()
 

@@ -18,22 +18,73 @@
 
 import SwiftUI
 
+func movedClipboardSelection(
+    from currentID: UUID?,
+    direction: MoveCommandDirection,
+    items: [ClipboardItem]
+) -> UUID? {
+    guard !items.isEmpty else { return nil }
+    guard let currentID, let currentIndex = items.firstIndex(where: { $0.id == currentID }) else {
+        return direction == .up ? items.last?.id : items.first?.id
+    }
+
+    switch direction {
+    case .up:
+        return items[max(0, currentIndex - 1)].id
+    case .down:
+        return items[min(items.count - 1, currentIndex + 1)].id
+    default:
+        return currentID
+    }
+}
+
 enum ClipboardTab: String, CaseIterable {
-    case history = "History"
+    case all = "All"
+    case text = "Text"
+    case images = "Images"
+    case files = "Files"
     case favorites = "Favorites"
     
     var icon: String {
         switch self {
-        case .history: return "clock"
+        case .all: return "square.grid.2x2"
+        case .text: return "text.alignleft"
+        case .images: return "photo"
+        case .files: return "doc"
         case .favorites: return "heart.fill"
         }
     }
     
     var localizedName: String {
         switch self {
-            case .history: return String(localized: "History")
-            case .favorites: return String(localized: "Favorites")
+        case .all: return String(localized: "All")
+        case .text: return String(localized: "Text")
+        case .images: return String(localized: "Image")
+        case .files: return String(localized: "File")
+        case .favorites: return String(localized: "Favorites")
         }
+    }
+
+    func includes(_ item: ClipboardItem) -> Bool {
+        switch self {
+        case .all:
+            return !item.isPinned
+        case .text:
+            return !item.isPinned && [.text, .url, .rtf, .unknown].contains(item.type)
+        case .images:
+            return !item.isPinned && item.type == .image
+        case .files:
+            return !item.isPinned && item.type == .file
+        case .favorites:
+            return item.isPinned
+        }
+    }
+
+    func items(from manager: ClipboardManager) -> [ClipboardItem] {
+        if self == .favorites {
+            return manager.pinnedItems
+        }
+        return manager.regularHistory.filter { includes($0) }
     }
 }
 
@@ -41,45 +92,20 @@ struct ClipboardTabButton: View {
     let tab: ClipboardTab
     let isSelected: Bool
     let action: () -> Void
-    @ObservedObject var clipboardManager = ClipboardManager.shared
-    
-    var itemCount: Int {
-        switch tab {
-        case .history:
-            return clipboardManager.regularHistory.count
-        case .favorites:
-            return clipboardManager.pinnedItems.count
-        }
-    }
     
     var body: some View {
         Button(action: action) {
-            HStack(spacing: 6) {
-                Image(systemName: tab.icon)
-                    .font(.system(size: 11))
-                
+            VStack(spacing: 5) {
                 Text(tab.localizedName)
                     .font(.system(size: 11, weight: .medium))
-                
-                if itemCount > 0 {
-                    Text("\(itemCount)")
-                        .font(.system(size: 9, weight: .bold))
-                        .foregroundColor(isSelected ? .white : .secondary)
-                        .padding(.horizontal, 4)
-                        .padding(.vertical, 1)
-                        .background(
-                            Capsule()
-                                .fill(isSelected ? Color.white.opacity(0.3) : Color.gray.opacity(0.2))
-                        )
-                }
+
+                Rectangle()
+                    .fill(isSelected ? Color.primary : Color.clear)
+                    .frame(height: 2)
             }
-            .foregroundColor(isSelected ? .white : .secondary)
-            .padding(.horizontal, 12)
-            .padding(.vertical, 6)
-            .background(
-                RoundedRectangle(cornerRadius: 6)
-                    .fill(isSelected ? Color.blue : Color.clear)
-            )
+            .foregroundColor(isSelected ? .primary : .secondary)
+            .frame(maxWidth: .infinity)
+            .padding(.top, 4)
         }
         .buttonStyle(PlainButtonStyle())
     }

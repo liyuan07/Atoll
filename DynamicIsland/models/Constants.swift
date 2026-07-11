@@ -1098,7 +1098,9 @@ extension Defaults.Keys {
     
     // MARK: Clipboard Feature
     static let enableClipboardManager = Key<Bool>("enableClipboardManager", default: true)
-    static let clipboardHistorySize = Key<Int>("clipboardHistorySize", default: 10)
+    static let clipboardHistorySize = Key<Int>("clipboardHistorySize", default: 5000)
+    static let clipboardExpirationDays = Key<Int>("clipboardExpirationDays", default: 30)
+    static let didMigrateClipboardDatabaseSettings = Key<Bool>("didMigrateClipboardDatabaseSettings", default: false)
     static let showClipboardIcon = Key<Bool>("showClipboardIcon", default: true)
     static let clipboardDisplayMode = Key<ClipboardDisplayMode>("clipboardDisplayMode", default: .panel)
     
@@ -1332,6 +1334,15 @@ extension Defaults.Keys {
 
         Defaults[.musicControlSlots] = slots
         Defaults[.didAddFavoriteMusicControl] = true
+    }
+
+    static func migrateClipboardDatabaseSettings() {
+        guard Defaults[.didMigrateClipboardDatabaseSettings] == false else { return }
+
+        if Defaults[.clipboardHistorySize] <= 10 {
+            Defaults[.clipboardHistorySize] = 5000
+        }
+        Defaults[.didMigrateClipboardDatabaseSettings] = true
     }
 
     static func migrateThirdPartyDDCIntegration() {
