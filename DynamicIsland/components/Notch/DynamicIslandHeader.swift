@@ -55,7 +55,8 @@ struct DynamicIslandHeader: View {
             .blur(radius: vm.notchState == .closed ? 20 : 0)
             .animation(.smooth.delay(0.1), value: vm.notchState)
             .zIndex(2)
-            .padding(8)
+            .padding(.horizontal, 8)
+            .padding(.vertical, 2)
 
             if vm.notchState == .open {
                 let spacerWidth = min(vm.closedNotchSize.width, 300)

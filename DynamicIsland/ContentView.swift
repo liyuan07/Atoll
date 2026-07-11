@@ -850,7 +850,7 @@ struct ContentView: View {
 
     @ViewBuilder
       func NotchLayout() -> some View {
-          VStack(alignment: .leading, spacing: coordinator.currentView == .extensionExperience ? 0 : 8) {
+          VStack(alignment: .leading, spacing: coordinator.currentView == .extensionExperience ? 0 : 2) {
               VStack(alignment: .leading) {
                   if coordinator.firstLaunch {
                       Spacer()
@@ -963,7 +963,7 @@ struct ContentView: View {
                           DynamicIslandFaceAnimation().animation(.interactiveSpring, value: musicManager.isPlayerIdle)
                       } else if vm.notchState == .open {
                           DynamicIslandHeader()
-                              .frame(height: max(24, vm.effectiveClosedNotchHeight))
+                              .frame(height: 36)
                        } else {
                            Rectangle().fill(.clear).frame(width: vm.closedNotchSize.width - 20, height: vm.effectiveClosedNotchHeight)
                        }
