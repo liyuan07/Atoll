@@ -33,8 +33,9 @@ final class SpotifyAuthManager: ObservableObject {
     @Published private(set) var authErrorMessage: String?
     @Published private(set) var sessionStatusText = "Spotify cookie not configured."
 
-    private let secretsURL = URL(string: "https://raw.githubusercontent.com/xyloflake/spot-secrets-go/main/secrets/secretDict.json")!
     private let tokenURL = URL(string: "https://open.spotify.com/api/token")!
+    private static let localSecretVersion = "61"
+    private static let localSecretCipher = [44, 55, 47, 42, 70, 40, 34, 114, 76, 74, 50, 111, 120, 97, 75, 76, 94, 102, 43, 69, 49, 120, 118, 80, 64, 78]
     private let userAgent = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/134.0.0.0 Safari/537.36"
 
     private init() {
@@ -129,12 +130,7 @@ final class SpotifyAuthManager: ObservableObject {
     }
 
     private func fetchWebPlayerToken(spDC: String) async throws -> SpotifyWebPlayerTokenResponse {
-        let secrets = try await fetchSecrets()
-        guard let latestSecret = latestSecretEntry(from: secrets) else {
-            throw SpotifyAuthError.missingSecrets
-        }
-
-        let totp = try Self.generateTOTPCode(from: latestSecret.cipher)
+        let totp = try Self.generateTOTPCode(from: Self.localSecretCipher)
 
         var components = URLComponents(url: tokenURL, resolvingAgainstBaseURL: false)
         components?.queryItems = [
@@ -142,7 +138,7 @@ final class SpotifyAuthManager: ObservableObject {
             URLQueryItem(name: "productType", value: "web-player"),
             URLQueryItem(name: "totp", value: totp),
             URLQueryItem(name: "totpServer", value: totp),
-            URLQueryItem(name: "totpVer", value: latestSecret.version)
+            URLQueryItem(name: "totpVer", value: Self.localSecretVersion)
         ]
 
         guard let url = components?.url else {
@@ -165,36 +161,6 @@ final class SpotifyAuthManager: ObservableObject {
         }
 
         return tokenResponse
-    }
-
-    private func fetchSecrets() async throws -> [String: [Int]] {
-        var request = URLRequest(url: secretsURL)
-        request.setValue(userAgent, forHTTPHeaderField: "User-Agent")
-
-        let (data, response) = try await URLSession.shared.data(for: request)
-        try Self.validateHTTPResponse(response, data: data)
-        return try JSONDecoder().decode([String: [Int]].self, from: data)
-    }
-
-    private func latestSecretEntry(from secrets: [String: [Int]]) -> (version: String, cipher: [Int])? {
-        var latestVersion: String?
-        var latestCipher: [Int]?
-        var highestNumericVersion = Int.min
-
-        for (version, cipher) in secrets {
-            guard let numericVersion = Int(version) else { continue }
-            if numericVersion > highestNumericVersion {
-                highestNumericVersion = numericVersion
-                latestVersion = version
-                latestCipher = cipher
-            }
-        }
-
-        guard let latestVersion, let latestCipher else {
-            return nil
-        }
-
-        return (latestVersion, latestCipher)
     }
 
     private func clearCachedToken() {
@@ -318,7 +284,6 @@ private enum SpotifyAuthError: LocalizedError {
     case invalidServerResponse
     case invalidTokenResponse
     case invalidSecretMaterial
-    case missingSecrets
     case httpFailure(Int)
     case serverError(String)
 
@@ -332,8 +297,6 @@ private enum SpotifyAuthError: LocalizedError {
             return "Spotify did not return a usable access token."
         case .invalidSecretMaterial:
             return "The Spotify TOTP secret could not be decoded."
-        case .missingSecrets:
-            return "No valid Spotify TOTP secret was found."
         case let .httpFailure(statusCode):
             return "Spotify token request failed with HTTP \(statusCode)."
         case let .serverError(message):

@@ -24,9 +24,6 @@ import SwiftUI
 private enum SpotifyLoginConstants {
     static let loginURL = URL(string: "https://accounts.spotify.com/en/login")!
     static let externalLoginURL = URL(string: "https://open.spotify.com/")!
-    static let cookieInstructionsURL = URL(
-        string: "https://github.com/Paxsenix0/Spotify-Canvas-API#how-to-get-sp_dc-cookie"
-    )!
     static let cookieDomainSuffix = "spotify.com"
     static let cookieName = "sp_dc"
     static let userAgent =

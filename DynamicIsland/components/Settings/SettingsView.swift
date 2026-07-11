@@ -12,7 +12,6 @@ import EventKit
 import KeyboardShortcuts
 import LaunchAtLogin
 import LottieUI
-import Sparkle
 import SwiftUI
 import SwiftUIIntrospect
 import UniformTypeIdentifiers
@@ -297,12 +296,6 @@ struct SettingsView: View {
     @State private var searchText: String = ""
     @StateObject private var highlightCoordinator = SettingsHighlightCoordinator()
     @Default(.enableMinimalisticUI) var enableMinimalisticUI
-
-    let updaterController: SPUStandardUpdaterController?
-
-    init(updaterController: SPUStandardUpdaterController? = nil) {
-        self.updaterController = updaterController
-    }
 
     var body: some View {
         NavigationSplitView {
@@ -1022,14 +1015,8 @@ struct SettingsView: View {
                 TerminalSettings()
             }
         case .about:
-            if let controller = updaterController {
-                SettingsForm(tab: .about) {
-                    About(updaterController: controller)
-                }
-            } else {
-                SettingsForm(tab: .about) {
-                    About(updaterController: SPUStandardUpdaterController(startingUpdater: false, updaterDelegate: nil, userDriverDelegate: nil))
-                }
+            SettingsForm(tab: .about) {
+                About()
             }
         }
     }
@@ -2789,14 +2776,9 @@ struct Media: View {
                 Text("Media Source")
             } footer: {
                 if MusicManager.shared.isNowPlayingDeprecated {
-                    HStack {
-                        Text("YouTube Music requires this third-party app to be installed: ")
-                            .foregroundStyle(.secondary)
-                            .font(.caption)
-                        Link("https://github.com/th-ch/youtube-music", destination: URL(string: "https://github.com/th-ch/youtube-music")!)
-                            .font(.caption)
-                            .foregroundColor(.blue) // Ensures it's visibly a link
-                    }
+                    Text("YouTube Music 需要安装对应的第三方桌面应用。")
+                        .foregroundStyle(.secondary)
+                        .font(.caption)
                 } else {
                     VStack(alignment: .leading, spacing: 6) {
                         Text(String(localized: "'Now Playing' was the only option on previous versions and works with all media apps."))
@@ -3530,7 +3512,6 @@ struct CalendarSettings: View {
 
 struct About: View {
     @State private var showBuildNumber: Bool = false
-    let updaterController: SPUStandardUpdaterController
     @Environment(\.openWindow) var openWindow
     var body: some View {
         VStack {
@@ -3561,8 +3542,6 @@ struct About: View {
                     Text("Version info")
                 }
 
-                UpdaterSettingsView(updater: updaterController.updater)
-
                 HStack(spacing: 30) {
                     Spacer(minLength: 0)
                     Button {
@@ -3573,20 +3552,6 @@ struct About: View {
                                 .font(.system(size: 16, weight: .semibold))
                                 .foregroundStyle(.white)
                             Text("Donate")
-                                .foregroundStyle(.white)
-                        }
-                        .contentShape(Rectangle())
-                    }
-                    Spacer(minLength: 0)
-                    Button {
-                        NSWorkspace.shared.open(productPage)
-                    } label: {
-                        VStack(spacing: 5) {
-                            Image("Github")
-                                .resizable()
-                                .aspectRatio(contentMode: .fit)
-                                .frame(width: 18)
-                            Text("GitHub")
                                 .foregroundStyle(.white)
                         }
                         .contentShape(Rectangle())
@@ -3610,13 +3575,6 @@ struct About: View {
             }
             .frame(maxWidth: .infinity, alignment: .center)
             .background(.regularMaterial)
-        }
-        .toolbar {
-            //            Button("Welcome window") {
-            //                openWindow(id: "onboarding")
-            //            }
-            //            .controlSize(.extraLarge)
-            CheckForUpdatesView(updater: updaterController.updater)
         }
         .navigationTitle("About")
     }

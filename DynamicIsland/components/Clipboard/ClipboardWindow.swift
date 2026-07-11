@@ -182,7 +182,11 @@ struct ClipboardWindowContent: View {
                   let item = filteredItems.first(where: { $0.id == selectedItemID })
             else { return .ignored }
             clipboardManager.activateItem(item)
+            ClipboardWindowManager.shared.hideClipboardWindow()
             return .handled
+        }
+        .onExitCommand {
+            ClipboardWindowManager.shared.hideClipboardWindow()
         }
         .onAppear {
             selectedItemID = filteredItems.first?.id

@@ -20,7 +20,6 @@ import AVFoundation
 import Combine
 import Defaults
 import KeyboardShortcuts
-import Sparkle
 import SwiftUI
 import SkyLightWindow
 
@@ -30,23 +29,11 @@ struct DynamicNotchApp: App {
     @Default(.menubarIcon) var showMenuBarIcon
     @Environment(\.openWindow) var openWindow
 
-    let updaterController: SPUStandardUpdaterController
-
-    init() {
-        updaterController = SPUStandardUpdaterController(
-            startingUpdater: true, updaterDelegate: nil, userDriverDelegate: nil)
-
-        // Initialize the settings window controller with the updater controller
-        SettingsWindowController.shared.setUpdaterController(updaterController)
-    }
-
     var body: some Scene {
         MenuBarExtra("dynamic.island", systemImage: "mountain.2.fill", isInserted: $showMenuBarIcon) {
             Button("Settings") {
                 SettingsWindowController.shared.showWindow()
             }
-            CheckForUpdatesView(updater: updaterController.updater)
-            Divider()
             Button("Restart Atoll") {
                 guard let bundleIdentifier = Bundle.main.bundleIdentifier else { return }
 

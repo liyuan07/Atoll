@@ -20,6 +20,7 @@ import SwiftUI
 import Defaults
 
 struct ClipboardPopover: View {
+    @Environment(\.dismiss) private var dismiss
     @ObservedObject var clipboardManager = ClipboardManager.shared
     @State private var selectedTab: ClipboardTab = .all
     @State private var searchText = ""
@@ -105,7 +106,11 @@ struct ClipboardPopover: View {
                   let item = filteredItems.first(where: { $0.id == selectedItemID })
             else { return .ignored }
             clipboardManager.activateItem(item)
+            dismiss()
             return .handled
+        }
+        .onExitCommand {
+            dismiss()
         }
         .onAppear {
             selectedItemID = filteredItems.first?.id

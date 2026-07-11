@@ -249,7 +249,11 @@ struct ClipboardPanelView: View {
                   let item = filteredItems.first(where: { $0.id == selectedItemID })
             else { return .ignored }
             clipboardManager.activateItem(item)
+            onClose()
             return .handled
+        }
+        .onExitCommand {
+            onClose()
         }
         .onAppear {
             selectedItemID = filteredItems.first?.id

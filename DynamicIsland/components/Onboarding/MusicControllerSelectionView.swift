@@ -109,11 +109,6 @@ struct ControllerOptionView: View {
                     .font(.subheadline)
                     .foregroundColor(.secondary)
                 
-                if controller == .youtubeMusic, let url = URL(string: "https://github.com/th-ch/youtube-music") {
-                    Link("View on GitHub: th-ch/youtube-music", destination: url)
-                        .font(.subheadline)
-                        .padding(.top, 2)
-                }
             }
             
             Spacer()
