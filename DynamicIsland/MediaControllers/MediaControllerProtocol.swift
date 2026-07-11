@@ -27,6 +27,7 @@ import Combine
 protocol MediaControllerProtocol: ObservableObject {
     var playbackStatePublisher: AnyPublisher<PlaybackState, Never> { get }
     var isWorking: Bool { get }
+    var supportsFavoriteToggle: Bool { get }
     func play() async
     func pause() async
     func seek(to time: Double) async
@@ -41,6 +42,8 @@ protocol MediaControllerProtocol: ObservableObject {
 }
 
 extension MediaControllerProtocol {
+    var supportsFavoriteToggle: Bool { false }
+
     /// Uses macOS' native MediaRemote Like command for players that expose it.
     /// Players without Like support simply ignore the command.
     func toggleFavorite() async {

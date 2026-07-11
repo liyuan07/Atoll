@@ -1162,7 +1162,9 @@ class MusicManager: ObservableObject {
 
     func toggleFavorite() {
         guard let controller = activeController else { return }
-        isFavorited.toggle()
+        let targetState = controller.supportsFavoriteToggle ? !isFavorited : true
+        guard targetState != isFavorited else { return }
+        isFavorited = targetState
         Task {
             await controller.toggleFavorite()
         }

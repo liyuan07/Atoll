@@ -35,6 +35,7 @@ private struct ITunesTrack: Decodable {
 }
 
 class AppleMusicController: MediaControllerProtocol {
+    var supportsFavoriteToggle: Bool { true }
     // MARK: - Properties
     @Published private var playbackState: PlaybackState = PlaybackState(
         bundleIdentifier: "com.apple.Music",
