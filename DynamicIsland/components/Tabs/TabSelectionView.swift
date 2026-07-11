@@ -28,10 +28,49 @@ import UniformTypeIdentifiers
 
 @MainActor
 private final class TabDragSession: ObservableObject {
+    @Published private(set) var isCommandPressed = NSEvent.modifierFlags.contains(.command)
+    @Published private(set) var isDragging = false
+
     private weak var viewModel: DynamicIslandViewModel?
     private var token: UUID?
     private var localMouseUpMonitor: Any?
     private var globalMouseUpMonitor: Any?
+    private var localFlagsChangedMonitor: Any?
+    private var globalFlagsChangedMonitor: Any?
+
+    var allowsDragging: Bool {
+        isCommandPressed || isDragging
+    }
+
+    func startMonitoringModifiers() {
+        stopMonitoringModifiers()
+        isCommandPressed = NSEvent.modifierFlags.contains(.command)
+
+        localFlagsChangedMonitor = NSEvent.addLocalMonitorForEvents(matching: .flagsChanged) { [weak self] event in
+            Task { @MainActor in
+                self?.isCommandPressed = event.modifierFlags.contains(.command)
+            }
+            return event
+        }
+        globalFlagsChangedMonitor = NSEvent.addGlobalMonitorForEvents(matching: .flagsChanged) { [weak self] event in
+            Task { @MainActor in
+                self?.isCommandPressed = event.modifierFlags.contains(.command)
+            }
+        }
+    }
+
+    func stopMonitoringModifiers() {
+        end()
+
+        if let localFlagsChangedMonitor {
+            NSEvent.removeMonitor(localFlagsChangedMonitor)
+            self.localFlagsChangedMonitor = nil
+        }
+        if let globalFlagsChangedMonitor {
+            NSEvent.removeMonitor(globalFlagsChangedMonitor)
+            self.globalFlagsChangedMonitor = nil
+        }
+    }
 
     func begin(using viewModel: DynamicIslandViewModel) {
         end()
@@ -39,6 +78,7 @@ private final class TabDragSession: ObservableObject {
         let token = UUID()
         self.token = token
         self.viewModel = viewModel
+        isDragging = true
         viewModel.setAutoCloseSuppression(true, token: token)
 
         localMouseUpMonitor = NSEvent.addLocalMonitorForEvents(matching: [.leftMouseUp]) { [weak self] event in
@@ -60,6 +100,7 @@ private final class TabDragSession: ObservableObject {
         }
         token = nil
         viewModel = nil
+        isDragging = false
 
         if let localMouseUpMonitor {
             NSEvent.removeMonitor(localMouseUpMonitor)
@@ -166,7 +207,7 @@ struct TabSelectionView: View {
         return applySavedLayout(to: tabsArray)
     }
     var body: some View {
-        HStack(spacing: 24) {
+        HStack(spacing: 12) {
             ForEach(Array(tabs.enumerated()), id: \.element.id) { idx, tab in
                 let isSelected = isSelected(tab)
                 let activeAccent = tab.accentColor ?? .white
@@ -179,11 +220,14 @@ struct TabSelectionView: View {
                     coordinator.currentView = tab.view
                 }
                 .frame(height: 26)
-                .onDrag {
-                    tabDragProvider(for: tab)
-                }
-                .onDrop(of: [Self.tabDragType], isTargeted: nil) { providers in
-                    moveTab(from: providers, before: tab.id)
+                .conditionalModifier(tabDragSession.allowsDragging) { view in
+                    view
+                        .onDrag {
+                            tabDragProvider(for: tab)
+                        }
+                        .onDrop(of: [Self.tabDragType], isTargeted: nil) { providers in
+                            moveTab(from: providers, before: tab.id)
+                        }
                 }
                 .contextMenu {
                     Button("Hide from Tab Bar", role: .destructive) {
@@ -223,10 +267,11 @@ struct TabSelectionView: View {
             .disabled(notchTabOrder.isEmpty)
         }
         .onAppear {
+            tabDragSession.startMonitoringModifiers()
             ensureValidSelection(with: tabs)
         }
         .onDisappear {
-            tabDragSession.end()
+            tabDragSession.stopMonitoringModifiers()
         }
     }
 
@@ -277,7 +322,6 @@ struct TabSelectionView: View {
                 guard let destinationIndex = orderedIDs.firstIndex(of: destinationID) else { return }
                 orderedIDs.insert(sourceID, at: destinationIndex)
                 notchTabOrder = orderedIDs
-                tabDragSession.end()
             }
         }
         return true
