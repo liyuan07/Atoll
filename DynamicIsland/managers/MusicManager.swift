@@ -510,8 +510,6 @@ class MusicManager: ObservableObject {
     private var lastArtworkContentIdentifier: String? = nil
     private var lastArtworkContentURL: String? = nil
 
-    private static let sodaFavoriteStatesDefaultsKey = "SodaMusicFavoriteStates"
-
     @Published var flipAngle: Double = 0
     @Published var lastFlipDirection: SkipDirection = .forward
     private let flipAnimationDuration: TimeInterval = 0.45
@@ -780,9 +778,6 @@ class MusicManager: ObservableObject {
             }
 
             self.refreshExplicitFlag(for: state)
-            self.refreshSodaMusicFavoriteState(for: state)
-
-
             // Only update sneak peek if there's actual content and something changed
             if shouldAutoPeekOnTrackChange && !state.title.isEmpty && !state.artist.isEmpty && state.isPlaying {
                 self.updateSneakPeek()
@@ -1167,64 +1162,10 @@ class MusicManager: ObservableObject {
         guard let controller = activeController else { return }
         let targetState = controller.supportsFavoriteToggle ? !isFavorited : true
         guard targetState != isFavorited else { return }
-        let previousState = isFavorited
         isFavorited = targetState
-
-        if bundleIdentifier == SodaMusicFavoriteController.bundleIdentifier {
-            let expectedTitle = songTitle
-            let expectedArtist = artistName
-            Task { [weak self] in
-                let verifiedState = await SodaMusicFavoriteController.shared.setFavorite(targetState)
-                await MainActor.run {
-                    guard let self,
-                          self.songTitle == expectedTitle,
-                          self.artistName == expectedArtist
-                    else { return }
-                    guard let verifiedState else {
-                        self.isFavorited = previousState
-                        return
-                    }
-                    self.isFavorited = verifiedState
-                    self.storeSodaFavoriteState(
-                        verifiedState,
-                        title: expectedTitle,
-                        artist: expectedArtist
-                    )
-                }
-            }
-            return
-        }
-
         Task {
             await controller.toggleFavorite()
         }
-    }
-
-    @MainActor
-    private func refreshSodaMusicFavoriteState(for state: PlaybackState) {
-        guard state.bundleIdentifier == SodaMusicFavoriteController.bundleIdentifier else { return }
-        if let favoriteState = storedSodaFavoriteState(title: state.title, artist: state.artist) {
-            isFavorited = favoriteState
-        }
-    }
-
-    private func storedSodaFavoriteState(title: String, artist: String) -> Bool? {
-        let states = UserDefaults.standard.dictionary(
-            forKey: Self.sodaFavoriteStatesDefaultsKey
-        ) as? [String: Bool]
-        return states?[sodaFavoriteStorageKey(title: title, artist: artist)]
-    }
-
-    private func storeSodaFavoriteState(_ state: Bool, title: String, artist: String) {
-        var states = UserDefaults.standard.dictionary(
-            forKey: Self.sodaFavoriteStatesDefaultsKey
-        ) as? [String: Bool] ?? [:]
-        states[sodaFavoriteStorageKey(title: title, artist: artist)] = state
-        UserDefaults.standard.set(states, forKey: Self.sodaFavoriteStatesDefaultsKey)
-    }
-
-    private func sodaFavoriteStorageKey(title: String, artist: String) -> String {
-        "\(title.trimmingCharacters(in: .whitespacesAndNewlines))|\(artist.trimmingCharacters(in: .whitespacesAndNewlines))"
     }
     
     func togglePlay() {
