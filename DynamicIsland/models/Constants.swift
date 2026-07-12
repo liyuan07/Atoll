@@ -710,59 +710,6 @@ struct AIModel: Codable, Identifiable, Defaults.Serializable {
     }
 }
 
-enum NoteFileType: String, Codable, CaseIterable, Defaults.Serializable, Identifiable {
-    case plainText, markdown, python, javascript, typescript, swift, json, html, css
-    case shell, sql, c, cpp, java, go, rust, yaml
-
-    var id: String { rawValue }
-
-    var displayName: String {
-        switch self {
-        case .plainText: return "Plain Text"
-        case .markdown: return "Markdown"
-        case .python: return "Python"
-        case .javascript: return "JavaScript"
-        case .typescript: return "TypeScript"
-        case .swift: return "Swift"
-        case .json: return "JSON"
-        case .html: return "HTML"
-        case .css: return "CSS"
-        case .shell: return "Shell"
-        case .sql: return "SQL"
-        case .c: return "C"
-        case .cpp: return "C++"
-        case .java: return "Java"
-        case .go: return "Go"
-        case .rust: return "Rust"
-        case .yaml: return "YAML"
-        }
-    }
-
-    var fileExtension: String {
-        switch self {
-        case .plainText: return "txt"
-        case .markdown: return "md"
-        case .python: return "py"
-        case .javascript: return "js"
-        case .typescript: return "ts"
-        case .swift: return "swift"
-        case .json: return "json"
-        case .html: return "html"
-        case .css: return "css"
-        case .shell: return "sh"
-        case .sql: return "sql"
-        case .c: return "c"
-        case .cpp: return "cpp"
-        case .java: return "java"
-        case .go: return "go"
-        case .rust: return "rs"
-        case .yaml: return "yaml"
-        }
-    }
-
-    var isCode: Bool { self != .plainText && self != .markdown }
-}
-
 struct NoteItem: Codable, Identifiable, Defaults.Serializable, Hashable {
     var id: UUID = UUID()
     var title: String
@@ -771,14 +718,13 @@ struct NoteItem: Codable, Identifiable, Defaults.Serializable, Hashable {
     var colorIndex: Int // 0: Yellow, 1: Blue, 2: Red, 3: Green
     var isPinned: Bool = false
     var imageFileName: String? = nil // Store filename instead of raw data
-    var fileType: NoteFileType = .plainText
     
     // Internal property for migration
     private enum CodingKeys: String, CodingKey {
-        case id, title, content, creationDate, colorIndex, isPinned, imageFileName, imageData, fileType
+        case id, title, content, creationDate, colorIndex, isPinned, imageFileName, imageData
     }
     
-    init(id: UUID = UUID(), title: String, content: String, creationDate: Date, colorIndex: Int, isPinned: Bool = false, imageFileName: String? = nil, fileType: NoteFileType = .plainText) {
+    init(id: UUID = UUID(), title: String, content: String, creationDate: Date, colorIndex: Int, isPinned: Bool = false, imageFileName: String? = nil) {
         self.id = id
         self.title = title
         self.content = content
@@ -786,7 +732,6 @@ struct NoteItem: Codable, Identifiable, Defaults.Serializable, Hashable {
         self.colorIndex = colorIndex
         self.isPinned = isPinned
         self.imageFileName = imageFileName
-        self.fileType = fileType
     }
     
     init(from decoder: Decoder) throws {
@@ -797,7 +742,6 @@ struct NoteItem: Codable, Identifiable, Defaults.Serializable, Hashable {
         creationDate = try container.decode(Date.self, forKey: .creationDate)
         colorIndex = try container.decode(Int.self, forKey: .colorIndex)
         isPinned = try container.decode(Bool.self, forKey: .isPinned)
-        fileType = try container.decodeIfPresent(NoteFileType.self, forKey: .fileType) ?? .plainText
         
         // Migration logic: if imageData exists but imageFileName doesn't, save it to disk
         if let data = try container.decodeIfPresent(Data.self, forKey: .imageData) {
@@ -819,7 +763,6 @@ struct NoteItem: Codable, Identifiable, Defaults.Serializable, Hashable {
         try container.encode(colorIndex, forKey: .colorIndex)
         try container.encode(isPinned, forKey: .isPinned)
         try container.encode(imageFileName, forKey: .imageFileName)
-        try container.encode(fileType, forKey: .fileType)
     }
     
     static let colors: [Color] = [.yellow, .blue, .red, .green, .purple, .orange]
