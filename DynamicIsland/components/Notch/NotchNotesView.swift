@@ -35,6 +35,7 @@ struct NotchNotesView: View {
     @State private var editorContent: String = ""
     @State private var editorImageData: Data? = nil
     @State private var editorColorIndex: Int = 0
+    @State private var editorFileType: NoteFileType = .plainText
     @State private var editorNoteId: UUID?
     @State private var autoSaveTask: Task<Void, Never>?
 
@@ -64,6 +65,7 @@ struct NotchNotesView: View {
                             content: $editorContent,
                             imageData: $editorImageData,
                             colorIndex: $editorColorIndex,
+                            fileType: $editorFileType,
                             onSave: saveNote,
                             onCancel: cancelEdit,
                             isNew: isEditingNewNote
@@ -132,6 +134,15 @@ struct NotchNotesView: View {
         .onChange(of: editorColorIndex) { _, _ in
             scheduleAutoSave()
         }
+        .onChange(of: editorFileType) { _, _ in
+            scheduleAutoSave()
+        }
+        .onReceive(NotificationCenter.default.publisher(for: NSApplication.willTerminateNotification)) { _ in
+            if isEditingNewNote || selectedNoteId != nil {
+                autoSaveTask?.cancel()
+                persistNote()
+            }
+        }
     }
     
     // MARK: - Actions
@@ -180,6 +191,7 @@ struct NotchNotesView: View {
                 editorContent = ""
                 editorImageData = data
                 editorColorIndex = 0
+                editorFileType = .plainText
                 editorNoteId = UUID()
                 isEditingNewNote = true
             }
@@ -191,6 +203,7 @@ struct NotchNotesView: View {
         editorContent = content
         editorImageData = nil
         editorColorIndex = 0
+        editorFileType = .plainText
         editorNoteId = UUID()
         isEditingNewNote = true
     }
@@ -200,6 +213,7 @@ struct NotchNotesView: View {
         editorContent = ""
         editorImageData = nil
         editorColorIndex = 0 // Default Yellow
+        editorFileType = .plainText
         editorNoteId = UUID()
         isEditingNewNote = true
     }
@@ -209,6 +223,7 @@ struct NotchNotesView: View {
         editorContent = note.content
         editorImageData = note.getImageData() // Load from disk
         editorColorIndex = note.colorIndex
+        editorFileType = note.fileType
         editorNoteId = note.id
         selectedNoteId = note.id
         isEditingNewNote = false
@@ -244,6 +259,7 @@ struct NotchNotesView: View {
             notes[index].content = editorContent
             notes[index].imageFileName = fileName
             notes[index].colorIndex = editorColorIndex
+            notes[index].fileType = editorFileType
         } else {
             // Create
             let newNote = NoteItem(
@@ -253,7 +269,8 @@ struct NotchNotesView: View {
                 creationDate: now,
                 colorIndex: editorColorIndex,
                 isPinned: false,
-                imageFileName: fileName
+                imageFileName: fileName,
+                fileType: editorFileType
             )
             notes.insert(newNote, at: 0)
         }
@@ -854,6 +871,13 @@ struct NoteRow: View {
                             .font(.system(size: isCompact ? 12 : 14, weight: .semibold, design: .rounded))
                             .foregroundStyle(.white)
                             .lineLimit(1)
+                        Text(".\(note.fileType.fileExtension)")
+                            .font(.system(size: isCompact ? 8 : 9, weight: .semibold, design: .monospaced))
+                            .foregroundStyle(.white.opacity(0.55))
+                            .padding(.horizontal, 4)
+                            .padding(.vertical, 2)
+                            .background(Color.white.opacity(0.09))
+                            .clipShape(Capsule())
                     }
                     
                     Text(note.content.isEmpty ? "No content" : note.content)
@@ -988,21 +1012,23 @@ struct NoteEditorView: View {
     @Binding var content: String
     @Binding var imageData: Data?
     @Binding var colorIndex: Int
+    @Binding var fileType: NoteFileType
     let onSave: () -> Void
     let cancelAction: () -> Void
     let isNew: Bool
     
-    init(title: Binding<String>, content: Binding<String>, imageData: Binding<Data?>, colorIndex: Binding<Int>, onSave: @escaping () -> Void, onCancel: @escaping () -> Void, isNew: Bool) {
+    init(title: Binding<String>, content: Binding<String>, imageData: Binding<Data?>, colorIndex: Binding<Int>, fileType: Binding<NoteFileType>, onSave: @escaping () -> Void, onCancel: @escaping () -> Void, isNew: Bool) {
         self._title = title
         self._content = content
         self._imageData = imageData
         self._colorIndex = colorIndex
+        self._fileType = fileType
         self.onSave = onSave
         self.cancelAction = onCancel
         self.isNew = isNew
     }
 
-    @FocusState private var isContentFocused: Bool
+    @State private var exportMessage: String?
     
     var body: some View {
         VStack(spacing: 0) {
@@ -1019,6 +1045,21 @@ struct NoteEditorView: View {
                 .buttonStyle(PlainButtonStyle())
                 
                 Spacer()
+
+                Button(action: exportToDesktop) {
+                    HStack(spacing: 4) {
+                        Image(systemName: "square.and.arrow.down")
+                        Text("Desktop")
+                    }
+                    .font(.system(size: 12, weight: .semibold, design: .rounded))
+                    .foregroundStyle(.white.opacity(0.85))
+                    .padding(.horizontal, 9)
+                    .padding(.vertical, 5)
+                    .background(Color.white.opacity(0.1))
+                    .clipShape(Capsule())
+                }
+                .buttonStyle(PlainButtonStyle())
+                .help("Save a copy to Desktop")
                 
                 Button(action: onSave) {
                     Text("Done")
@@ -1064,6 +1105,51 @@ struct NoteEditorView: View {
             .padding(.leading, 16)
             .padding(.trailing, 4)
             .padding(.bottom, 8)
+
+            HStack(spacing: 8) {
+                Menu {
+                    ForEach(NoteFileType.allCases) { type in
+                        Button {
+                            fileType = type
+                        } label: {
+                            if fileType == type {
+                                Label(type.displayName, systemImage: "checkmark")
+                            } else {
+                                Text(type.displayName)
+                            }
+                        }
+                    }
+                } label: {
+                    HStack(spacing: 5) {
+                        Image(systemName: fileType.isCode ? "chevron.left.forwardslash.chevron.right" : "doc.text")
+                        Text(fileType.displayName)
+                        Text(".\(fileType.fileExtension)")
+                            .foregroundStyle(.secondary)
+                        Image(systemName: "chevron.down")
+                            .font(.system(size: 8, weight: .bold))
+                    }
+                    .font(.system(size: 11, weight: .medium, design: .rounded))
+                    .foregroundStyle(.white.opacity(0.8))
+                    .padding(.horizontal, 9)
+                    .padding(.vertical, 5)
+                    .background(Color.white.opacity(0.08))
+                    .clipShape(Capsule())
+                }
+                .menuStyle(.borderlessButton)
+                .fixedSize()
+
+                if let exportMessage {
+                    Text(exportMessage)
+                        .font(.system(size: 10, weight: .medium, design: .rounded))
+                        .foregroundStyle(exportMessage.hasPrefix("Saved") ? .green : .red)
+                        .lineLimit(1)
+                        .transition(.opacity)
+                }
+
+                Spacer()
+            }
+            .padding(.horizontal, 16)
+            .padding(.bottom, 8)
             
             Divider()
                 .background(Color.white.opacity(0.1))
@@ -1081,15 +1167,9 @@ struct NoteEditorView: View {
                         .allowsHitTesting(false)
                 }
                 
-                TextEditor(text: $content)
-                    .font(.system(size: 13, design: .rounded))
-                    .foregroundStyle(.white)
-                    .lineSpacing(4)
-                    .scrollContentBackground(.hidden)
-                    .padding(8)
+                NoteTextEditor(text: $content, fileType: fileType, autofocus: isNew)
                     .padding(.bottom, 20)
-                    .padding(.trailing, imageData != nil ? 75 : 0) // Reduced from 100
-                    .focused($isContentFocused)
+                    .padding(.trailing, imageData != nil ? 75 : 0)
                     .frame(maxHeight: .infinity)
                     .background(Color.white.opacity(0.05))
                 
@@ -1146,10 +1226,37 @@ struct NoteEditorView: View {
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity) // Ensure VStack takes full space
         .background(Color.black) // Ensure solid background
-        .onAppear {
-            if isNew {
-                isContentFocused = true
-            }
+    }
+
+    private func exportToDesktop() {
+        let desktop = FileManager.default.urls(for: .desktopDirectory, in: .userDomainMask).first!
+        let invalidCharacters = CharacterSet(charactersIn: "/:")
+            .union(.newlines)
+            .union(.controlCharacters)
+        var baseName = title.trimmingCharacters(in: .whitespacesAndNewlines)
+        if baseName.isEmpty { baseName = "Untitled" }
+        baseName = baseName.components(separatedBy: invalidCharacters).joined(separator: "-")
+        let currentExtension = (baseName as NSString).pathExtension
+        if !currentExtension.isEmpty {
+            baseName = (baseName as NSString).deletingPathExtension
+        }
+
+        var destination = desktop.appendingPathComponent("\(baseName).\(fileType.fileExtension)")
+        var copyNumber = 2
+        while FileManager.default.fileExists(atPath: destination.path) {
+            destination = desktop.appendingPathComponent("\(baseName) \(copyNumber).\(fileType.fileExtension)")
+            copyNumber += 1
+        }
+
+        do {
+            try content.write(to: destination, atomically: true, encoding: .utf8)
+            withAnimation { exportMessage = "Saved: \(destination.lastPathComponent)" }
+        } catch {
+            withAnimation { exportMessage = "Could not save" }
+        }
+
+        DispatchQueue.main.asyncAfter(deadline: .now() + 2.5) {
+            withAnimation { exportMessage = nil }
         }
     }
 }
