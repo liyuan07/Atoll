@@ -20,6 +20,7 @@ import AppKit
 import SwiftUI
 import Combine
 import Foundation
+import ImageIO
 import UniformTypeIdentifiers
 import Defaults
 
@@ -459,61 +460,44 @@ class ClipboardManager: ObservableObject {
     
     private func getCurrentClipboardItem() -> ClipboardItem? {
         let pasteboard = NSPasteboard.general
-        
-        // Step 1: Check what types are available
-        let hasFileURLs = pasteboard.canReadObject(forClasses: [NSURL.self], options: nil)
-        let hasImageData = pasteboard.data(forType: .png) != nil || 
-                          pasteboard.data(forType: .tiff) != nil || 
-                          pasteboard.data(forType: NSPasteboard.PasteboardType("public.jpeg")) != nil
-        let hasString = pasteboard.string(forType: .string) != nil
-        
-        // Step 2: Smart detection based on context
-        
-        // Priority 1: If there are file URLs AND the files are actual image files, treat as image files (from Finder)
-        if hasFileURLs {
-            if let fileURLs = pasteboard.readObjects(forClasses: [NSURL.self], options: nil) as? [URL] {
-                let realFileURLs = fileURLs.filter { url in
-                    return url.isFileURL && 
-                           !url.path.contains("/.file/id=") && 
-                           !url.path.contains("/tmp/") && 
-                           !url.path.hasPrefix("/private/var/") && 
-                           !url.path.contains("/ClipboardViewer") && 
-                           FileManager.default.fileExists(atPath: url.path)
-                }
-                
-                if !realFileURLs.isEmpty {
-                    // Check if these are image files - if so, try to load the actual image data
-                    let imageExtensions = ["jpg", "jpeg", "png", "gif", "bmp", "tiff", "tif", "webp", "heic", "heif"]
-                    let imageFiles = realFileURLs.filter { url in
-                        imageExtensions.contains(url.pathExtension.lowercased())
-                    }
-                    
-                    // If we have image files from Finder, load the actual image data
-                    if !imageFiles.isEmpty, let firstImageURL = imageFiles.first {
-                        if let imageData = try? Data(contentsOf: firstImageURL) {
-                            return ClipboardItem(imageData: imageData, fileExtension: firstImageURL.pathExtension)
-                        }
-                    }
-                    
-                    // Otherwise, treat as file(s)
-                    let urlStrings = realFileURLs.map { $0.absoluteString }
-                    return ClipboardItem(fileURLs: urlStrings)
-                }
+
+        let fileURLs = (
+            pasteboard.readObjects(forClasses: [NSURL.self], options: nil) as? [URL]
+        ) ?? []
+
+        // Apps such as WeChat commonly publish both a temporary file URL and
+        // image data. Inspect image files before removing temporary URLs.
+        for imageURL in fileURLs {
+            if let (imageData, fileExtension) = readableImagePayload(at: imageURL) {
+                return ClipboardItem(imageData: imageData, fileExtension: fileExtension)
             }
         }
-        
-        // Priority 2: If there's ONLY image data without file URLs (screenshots, direct image paste)
-        if hasImageData && !hasFileURLs {
-            if let imageData = pasteboard.data(forType: .png) {
-                return ClipboardItem(imageData: imageData, fileExtension: "png")
-            } else if let imageData = pasteboard.data(forType: .tiff) {
-                return ClipboardItem(imageData: imageData, fileExtension: "tiff")
-            } else if let imageData = pasteboard.data(forType: NSPasteboard.PasteboardType("public.jpeg")) {
-                return ClipboardItem(imageData: imageData, fileExtension: "jpg")
-            }
+
+        // Finder files should remain file entries. Temporary and virtual URLs
+        // are deliberately excluded here, but no longer prevent the image
+        // payload fallback below.
+        let persistentFileURLs = fileURLs.filter(isPersistentFileURL)
+        if !persistentFileURLs.isEmpty {
+            return ClipboardItem(fileURLs: persistentFileURLs.map(\.absoluteString))
         }
-        
-        // Priority 3: Plain text (including copied text)
+
+        // Do not turn a temporary non-image file's Quick Look preview into an
+        // image history entry. A real image file has already been recognized
+        // above through ImageIO, including files without an extension.
+        let hasReadableNonImageFile = fileURLs.contains { url in
+            url.isFileURL && FileManager.default.fileExists(atPath: url.path)
+        }
+        if hasReadableNonImageFile {
+            return nil
+        }
+
+        // Read image payloads regardless of whether the source also advertised
+        // a temporary URL. This is the path used by WeChat conversation images.
+        if let imageItem = imageClipboardItem(from: pasteboard) {
+            return imageItem
+        }
+
+        // Plain text (including copied text)
         if let string = pasteboard.string(forType: .string), !string.isEmpty {
             // Determine if it's a URL
             if string.hasPrefix("http://") || string.hasPrefix("https://") {
@@ -521,26 +505,78 @@ class ClipboardManager: ObservableObject {
             }
             return ClipboardItem(stringData: string, type: .text)
         }
-        
-        // Priority 4: RTF
+
+        // Rich text
         if let rtfData = pasteboard.data(forType: .rtf),
            let rtfString = NSAttributedString(rtf: rtfData, documentAttributes: nil)?.string, !rtfString.isEmpty {
             return ClipboardItem(rtfData: rtfData, plainText: rtfString)
         }
-        
-        // Priority 5: If we have image data WITH file URLs (document thumbnails), 
-        // this is likely a document with a preview - ignore the thumbnail and treat as unknown
-        if hasImageData && hasFileURLs {
-            // This is likely a document with a thumbnail preview - we don't want the thumbnail
-            return nil
-        }
-        
-        // Priority 6: URL strings
+
+        // URL strings
         if let url = pasteboard.string(forType: .URL) {
             return ClipboardItem(stringData: url, type: .url)
         }
-        
+
         return nil
+    }
+
+    private func readableImagePayload(at url: URL) -> (Data, String)? {
+        guard url.isFileURL,
+              FileManager.default.fileExists(atPath: url.path),
+              let source = CGImageSourceCreateWithURL(url as CFURL, nil),
+              CGImageSourceGetCount(source) > 0,
+              let data = try? Data(contentsOf: url) else {
+            return nil
+        }
+
+        let detectedExtension = (CGImageSourceGetType(source) as String?)
+            .flatMap { UTType($0)?.preferredFilenameExtension }
+        let fileExtension = detectedExtension
+            ?? (url.pathExtension.isEmpty ? nil : url.pathExtension)
+            ?? "png"
+        return (data, fileExtension)
+    }
+
+    private func isPersistentFileURL(_ url: URL) -> Bool {
+        url.isFileURL
+            && !url.path.contains("/.file/id=")
+            && !url.path.contains("/tmp/")
+            && !url.path.hasPrefix("/private/var/")
+            && !url.path.contains("/ClipboardViewer")
+            && FileManager.default.fileExists(atPath: url.path)
+    }
+
+    private func imageClipboardItem(from pasteboard: NSPasteboard) -> ClipboardItem? {
+        let candidates: [(NSPasteboard.PasteboardType, String)] = [
+            (.png, "png"),
+            (.tiff, "tiff"),
+            (NSPasteboard.PasteboardType("public.jpeg"), "jpg"),
+            (NSPasteboard.PasteboardType("public.heic"), "heic"),
+            (NSPasteboard.PasteboardType("public.heif"), "heif"),
+            (NSPasteboard.PasteboardType("com.compuserve.gif"), "gif"),
+            (NSPasteboard.PasteboardType("com.microsoft.bmp"), "bmp"),
+            (NSPasteboard.PasteboardType("org.webmproject.webp"), "webp")
+        ]
+
+        for (type, fileExtension) in candidates {
+            if let data = pasteboard.data(forType: type), !data.isEmpty {
+                return ClipboardItem(imageData: data, fileExtension: fileExtension)
+            }
+        }
+
+        // Some apps expose a vendor-specific image UTI that NSImage can decode
+        // even though no standard representation is listed directly.
+        let declaresImageType = pasteboard.types?.contains { type in
+            UTType(type.rawValue)?.conforms(to: .image) == true
+        } == true
+        guard declaresImageType,
+              let image = NSImage(pasteboard: pasteboard),
+              let tiffData = image.tiffRepresentation,
+              let bitmap = NSBitmapImageRep(data: tiffData),
+              let pngData = bitmap.representation(using: .png, properties: [:]) else {
+            return nil
+        }
+        return ClipboardItem(imageData: pngData, fileExtension: "png")
     }
     
     private func addToHistory(_ item: ClipboardItem) {
