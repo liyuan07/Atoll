@@ -13,14 +13,23 @@ import Foundation
 struct CodexUsageWindow: Equatable, Sendable {
     let usedFraction: Double
     let resetAt: Date?
+    let isAvailable: Bool
 
-    init(usedFraction: Double, resetAt: Date?) {
+    init(usedFraction: Double, resetAt: Date?, isAvailable: Bool = true) {
         self.usedFraction = min(max(usedFraction, 0), 1)
         self.resetAt = resetAt
+        self.isAvailable = isAvailable
     }
 
-    var remainingPercent: Int {
-        Int(((1 - usedFraction) * 100).rounded())
+    static let unavailable = CodexUsageWindow(
+        usedFraction: 0,
+        resetAt: nil,
+        isAvailable: false
+    )
+
+    var remainingPercent: Int? {
+        guard isAvailable else { return nil }
+        return Int(((1 - usedFraction) * 100).rounded())
     }
 }
 
@@ -191,21 +200,65 @@ struct CodexUsageFetcher: Sendable {
 
     static func decode(data: Data) throws -> CodexUsageSnapshot {
         guard let response = try? JSONDecoder().decode(UsageResponse.self, from: data),
-              let primary = parseWindow(response.rateLimit.primaryWindow) else {
+              parseWindow(response.rateLimit.primaryWindow) != nil else {
             throw CodexUsageIntegrationError.malformedResponse
         }
-        // The service omits `secondary_window` immediately after some weekly
-        // resets. Treat that state as a fresh weekly allowance; a later refresh
-        // will replace it once the server starts returning the window again.
-        let secondary = response.rateLimit.secondaryWindow
-            .flatMap(parseWindow)
-            ?? CodexUsageWindow(usedFraction: 0, resetAt: nil)
+
+        var fiveHour: CodexUsageWindow?
+        var weekly: CodexUsageWindow?
+        var unclassified: [(index: Int, usage: CodexUsageWindow)] = []
+        let windows = [response.rateLimit.primaryWindow, response.rateLimit.secondaryWindow]
+
+        for (index, window) in windows.enumerated() {
+            guard let window, let usage = parseWindow(window) else { continue }
+            switch windowKind(for: window) {
+            case .fiveHour:
+                if fiveHour == nil { fiveHour = usage }
+            case .weekly:
+                if weekly == nil { weekly = usage }
+            case nil:
+                unclassified.append((index, usage))
+            }
+        }
+
+        // Older responses did not include `limit_window_seconds`. Preserve
+        // their positional primary=5h / secondary=weekly meaning only when the
+        // server has not supplied enough information to classify the window.
+        for entry in unclassified {
+            if entry.index == 0, fiveHour == nil {
+                fiveHour = entry.usage
+            } else if entry.index == 1, weekly == nil {
+                weekly = entry.usage
+            } else if fiveHour == nil {
+                fiveHour = entry.usage
+            } else if weekly == nil {
+                weekly = entry.usage
+            }
+        }
+
         return CodexUsageSnapshot(
-            fiveHour: primary,
-            weekly: secondary,
+            fiveHour: fiveHour ?? .unavailable,
+            weekly: weekly ?? .unavailable,
             plan: response.planType,
             tokenUsage: .zero
         )
+    }
+
+    private enum WindowKind {
+        case fiveHour
+        case weekly
+    }
+
+    private static func windowKind(for window: UsageWindow) -> WindowKind? {
+        guard let seconds = window.limitWindowSeconds else { return nil }
+        switch seconds {
+        case 4 * 3_600...6 * 3_600:
+            return .fiveHour
+        case 6 * 24 * 3_600...8 * 24 * 3_600:
+            return .weekly
+        default:
+            return nil
+        }
     }
 
     private static func parseWindow(_ window: UsageWindow) -> CodexUsageWindow? {
@@ -239,10 +292,12 @@ struct CodexUsageFetcher: Sendable {
     private struct UsageWindow: Decodable {
         let usedPercent: Double
         let resetAt: Double?
+        let limitWindowSeconds: Double?
 
         enum CodingKeys: String, CodingKey {
             case usedPercent = "used_percent"
             case resetAt = "reset_at"
+            case limitWindowSeconds = "limit_window_seconds"
         }
     }
 }

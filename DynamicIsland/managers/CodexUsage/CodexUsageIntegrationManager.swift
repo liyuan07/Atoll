@@ -296,13 +296,17 @@ private enum CodexUsageDashboard {
             usage.weekly.resetAt,
             includeDate: true
         ))
-        let five = usage.fiveHour.remainingPercent
-        let week = usage.weekly.remainingPercent
+        let fivePercent = usage.fiveHour.remainingPercent
+        let weekPercent = usage.weekly.remainingPercent
+        let five = fivePercent.map(String.init) ?? "—"
+        let week = weekPercent.map(String.init) ?? "—"
+        let fiveSuffix = fivePercent == nil ? "" : "<span>%</span>"
+        let weekSuffix = weekPercent == nil ? "" : "<span>%</span>"
         let fiveHourTokens = compactTokenCount(usage.tokenUsage.fiveHour)
         let dailyTokens = compactTokenCount(usage.tokenUsage.twentyFourHour)
         let weeklyTokens = compactTokenCount(usage.tokenUsage.weekly)
-        let fiveBars = barSegments(filledPercent: five)
-        let weekBars = barSegments(filledPercent: week)
+        let fiveBars = barSegments(filledPercent: fivePercent ?? 0)
+        let weekBars = barSegments(filledPercent: weekPercent ?? 0)
 
         return """
         <!doctype html><html><head><meta charset="utf-8"><style>
@@ -316,8 +320,8 @@ private enum CodexUsageDashboard {
         <section class="quota">
         <div class="identity"><svg class="openai" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.1" stroke-linecap="round" stroke-linejoin="round" aria-label="OpenAI"><path d="M12 3.2a4.3 4.3 0 0 1 7.37 3.03 4.3 4.3 0 0 1 1.95 7.73 4.3 4.3 0 0 1-5.41 5.83A4.3 4.3 0 0 1 8.63 20a4.3 4.3 0 0 1-5.95-5.3A4.3 4.3 0 0 1 4.6 7.04 4.3 4.3 0 0 1 12 3.2Z"/><path d="m8.1 7.1 7.8 4.5v8.1M4.7 14.5l7.3-4.2 7.2 4.2M12 3.2v8.4l-7.3 4.2"/></svg><div class="pill">\(plan)</div></div>
         <div aria-hidden="true"></div>
-        <div class="metric"><div class="row"><div class="label">5h</div><div class="value-line"><div class="inline-reset">\(fiveReset)</div><div class="value">\(five)<span>%</span></div></div></div><div class="bar">\(fiveBars)</div></div>
-        <div class="metric"><div class="row"><div class="label">1 week</div><div class="value-line"><div class="inline-reset">\(weeklyReset)</div><div class="value">\(week)<span>%</span></div></div></div><div class="bar">\(weekBars)</div></div>
+        <div class="metric"><div class="row"><div class="label">5h</div><div class="value-line"><div class="inline-reset">\(fiveReset)</div><div class="value">\(five)\(fiveSuffix)</div></div></div><div class="bar">\(fiveBars)</div></div>
+        <div class="metric"><div class="row"><div class="label">1 week</div><div class="value-line"><div class="inline-reset">\(weeklyReset)</div><div class="value">\(week)\(weekSuffix)</div></div></div><div class="bar">\(weekBars)</div></div>
         </section>
         <section class="tokens">
         <div class="stat"><div class="token-label">5h</div><div class="token-value">\(fiveHourTokens)</div><div class="cap">tokens used</div></div>
