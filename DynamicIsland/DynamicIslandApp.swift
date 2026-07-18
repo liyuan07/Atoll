@@ -557,6 +557,12 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         Defaults.Keys.migrateCapsLockTintMode()
         Defaults.Keys.migrateThirdPartyDDCIntegration()
 
+        // Clipboard history is a background feature. Start its monitor during
+        // app launch instead of waiting for the clipboard UI to be opened.
+        if Defaults[.enableClipboardManager] {
+            ClipboardManager.shared.startMonitoring()
+        }
+
         Defaults.publisher(.enableThirdPartyDDCIntegration, options: [])
             .sink { _ in
                 Defaults.Keys.syncLegacyThirdPartyDDCKeys()
@@ -710,8 +716,13 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             }
         }.store(in: &cancellables)
 
-        Defaults.publisher(.enableClipboardManager, options: []).sink { [weak self] _ in
+        Defaults.publisher(.enableClipboardManager, options: []).sink { [weak self] change in
             Task { @MainActor [weak self] in
+                if change.newValue {
+                    ClipboardManager.shared.startMonitoring()
+                } else {
+                    ClipboardManager.shared.stopMonitoring()
+                }
                 self?.updateFeatureShortcutAvailability()
             }
         }.store(in: &cancellables)
