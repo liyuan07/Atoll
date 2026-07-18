@@ -587,15 +587,17 @@ class ClipboardManager: ObservableObject {
             let itemsToRemove = self.clipboardHistory.filter { existingItem in
                 return self.isSameContent(existingItem, item)
             }
-            
+
+            // Remove records by their already resolved IDs before deleting
+            // payloads. Once an image file is deleted, data-based comparison can
+            // no longer identify its history record.
+            let itemIDsToRemove = Set(itemsToRemove.map(\.id))
+            self.clipboardHistory.removeAll { itemIDsToRemove.contains($0.id) }
+
             for oldItem in itemsToRemove {
                 self.deletePayloadFiles(for: oldItem)
             }
-            
-            self.clipboardHistory.removeAll { existingItem in
-                return self.isSameContent(existingItem, item)
-            }
-            
+
             // Add to beginning of array
             self.clipboardHistory.insert(item, at: 0)
             self.lastCopiedItemDate = item.timestamp
@@ -664,7 +666,20 @@ class ClipboardManager: ObservableObject {
         clipboardHistory.removeAll { $0.timestamp < cutoff }
     }
 
+    private func removeItemsWithMissingImagePayloads() {
+        let hasImagePayload: (ClipboardItem) -> Bool = { item in
+            guard item.type == .image else { return true }
+            guard let fileName = item.imageFileName else { return false }
+            let fileURL = ClipboardManager.clipboardDataDirectory.appendingPathComponent(fileName)
+            return FileManager.default.fileExists(atPath: fileURL.path)
+        }
+
+        clipboardHistory.removeAll { !hasImagePayload($0) }
+        pinnedItems.removeAll { !hasImagePayload($0) }
+    }
+
     private func performDatabaseMaintenance() {
+        removeItemsWithMissingImagePayloads()
         removeExpiredItems()
         trimHistoryToLimit()
         cleanupOldFiles()
