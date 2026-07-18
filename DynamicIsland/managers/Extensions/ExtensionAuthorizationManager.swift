@@ -64,6 +64,7 @@ final class ExtensionAuthorizationManager: ObservableObject {
         }
 
         objectWillChange.send()
+        notifyConfigurationChanged()
     }
 
     func updateFeatureToggles(extensionsEnabled: Bool? = nil,
@@ -75,6 +76,7 @@ final class ExtensionAuthorizationManager: ObservableObject {
         if let lockScreenWidgetsEnabled { Defaults[.enableExtensionLockScreenWidgets] = lockScreenWidgetsEnabled }
         if let notchExperiencesEnabled { Defaults[.enableExtensionNotchExperiences] = notchExperiencesEnabled }
         objectWillChange.send()
+        notifyConfigurationChanged()
     }
 
     func authorizationEntry(for bundleIdentifier: String) -> ExtensionAuthorizationEntry? {
@@ -105,6 +107,7 @@ final class ExtensionAuthorizationManager: ObservableObject {
             entry.grantedAt = .now
             entry.lastDeniedReason = nil
         }
+        notifyConfigurationChanged()
     }
 
     func deny(bundleIdentifier: String, reason: String?) {
@@ -112,6 +115,7 @@ final class ExtensionAuthorizationManager: ObservableObject {
             entry.status = .denied
             entry.lastDeniedReason = reason
         }
+        notifyConfigurationChanged()
     }
 
     func revoke(bundleIdentifier: String, reason: String?) {
@@ -119,6 +123,7 @@ final class ExtensionAuthorizationManager: ObservableObject {
             entry.status = .revoked
             entry.lastDeniedReason = reason
         }
+        notifyConfigurationChanged()
     }
 
     func recordActivity(for bundleIdentifier: String, scope: ExtensionPermissionScope) {
@@ -148,6 +153,16 @@ final class ExtensionAuthorizationManager: ObservableObject {
         updateEntry(bundleIdentifier: bundleIdentifier) { entry in
             entry.allowedScopes = allowedScopes
         }
+        notifyConfigurationChanged()
+    }
+
+    func updateAppNameIfPlaceholder(bundleIdentifier: String, appName: String) {
+        guard let index = entries.firstIndex(where: { $0.bundleIdentifier == bundleIdentifier }),
+              entries[index].appName == bundleIdentifier else {
+            return
+        }
+        entries[index].appName = appName
+        persistEntries()
     }
 
     func resetRateLimits(for bundleIdentifier: String) {
@@ -160,6 +175,7 @@ final class ExtensionAuthorizationManager: ObservableObject {
         rateLimitRecords.removeAll { $0.bundleIdentifier == bundleIdentifier }
         persistEntries()
         persistRateLimitRecords()
+        notifyConfigurationChanged()
     }
 
     // MARK: - Validation Helpers
@@ -255,5 +271,12 @@ final class ExtensionAuthorizationManager: ObservableObject {
     private func normalizeState() {
         entries = entries.filter { !$0.bundleIdentifier.isEmpty }
         rateLimitRecords = rateLimitRecords.filter { !$0.bundleIdentifier.isEmpty }
+    }
+
+    private func notifyConfigurationChanged() {
+        NotificationCenter.default.post(
+            name: .extensionAuthorizationConfigurationDidChange,
+            object: self
+        )
     }
 }

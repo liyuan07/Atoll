@@ -18,6 +18,93 @@
 
 import AppKit
 import SwiftUI
+import ImageIO
+
+struct ClipboardItemLeadingPreview: View {
+    let item: ClipboardItem
+
+    var body: some View {
+        Group {
+            if item.type == .image {
+                if let thumbnail = ClipboardImageThumbnailCache.shared.thumbnail(for: item) {
+                    Image(nsImage: thumbnail)
+                        .resizable()
+                        .interpolation(.high)
+                        .scaledToFill()
+                        .frame(width: 72, height: 52)
+                        .clipShape(RoundedRectangle(cornerRadius: 7, style: .continuous))
+                        .overlay {
+                            RoundedRectangle(cornerRadius: 7, style: .continuous)
+                                .stroke(Color.primary.opacity(0.12), lineWidth: 1)
+                        }
+                } else {
+                    imageFallback
+                }
+            } else {
+                Image(systemName: item.type.icon)
+                    .font(.system(size: 14))
+                    .foregroundColor(.blue)
+                    .frame(width: 72, height: 52, alignment: .center)
+            }
+        }
+    }
+
+    private var imageFallback: some View {
+        ZStack {
+            RoundedRectangle(cornerRadius: 7, style: .continuous)
+                .fill(Color.secondary.opacity(0.1))
+            Image(systemName: item.type.icon)
+                .font(.system(size: 18))
+                .foregroundColor(.blue)
+        }
+        .frame(width: 72, height: 52)
+    }
+}
+
+private final class ClipboardImageThumbnailCache {
+    static let shared = ClipboardImageThumbnailCache()
+
+    private let cache = NSCache<NSString, NSImage>()
+
+    private init() {
+        cache.countLimit = 160
+        cache.totalCostLimit = 48 * 1_024 * 1_024
+    }
+
+    func thumbnail(for item: ClipboardItem) -> NSImage? {
+        guard let fileName = item.imageFileName else { return nil }
+        let cacheKey = fileName as NSString
+        if let cached = cache.object(forKey: cacheKey) {
+            return cached
+        }
+
+        let fileURL = ClipboardManager.clipboardDataDirectory.appendingPathComponent(fileName)
+        guard let source = CGImageSourceCreateWithURL(fileURL as CFURL, nil) else {
+            return nil
+        }
+
+        let options: [CFString: Any] = [
+            kCGImageSourceCreateThumbnailFromImageAlways: true,
+            kCGImageSourceCreateThumbnailWithTransform: true,
+            kCGImageSourceShouldCacheImmediately: true,
+            kCGImageSourceThumbnailMaxPixelSize: 240
+        ]
+        guard let cgImage = CGImageSourceCreateThumbnailAtIndex(source, 0, options as CFDictionary) else {
+            return nil
+        }
+
+        let thumbnail = NSImage(
+            cgImage: cgImage,
+            size: NSSize(width: cgImage.width, height: cgImage.height)
+        )
+        cache.setObject(
+            thumbnail,
+            forKey: cacheKey,
+            cost: cgImage.bytesPerRow * cgImage.height
+        )
+        return thumbnail
+    }
+}
 
 func fuzzyMatchedClipboardItems(
     query: String,

@@ -44,6 +44,11 @@ struct ClipboardWindow: View {
         guard let selectedItemID,
               let item = filteredItems.first(where: { $0.id == selectedItemID })
         else { return }
+        activate(item)
+    }
+
+    private func activate(_ item: ClipboardItem) {
+        selectedItemID = item.id
         clipboardManager.activateItem(item)
         ClipboardWindowManager.shared.hideClipboardWindow()
         ClipboardPasteCoordinator.shared.pasteIntoCapturedApplication()
@@ -67,10 +72,11 @@ struct ClipboardWindow: View {
             ClipboardWindowContent(
                 selectedTab: $selectedTab,
                 searchText: searchText,
-                selectedItemID: $selectedItemID
+                selectedItemID: $selectedItemID,
+                onActivate: activate
             )
         }
-        .frame(width: 420, height: 520)
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
         .background(VisualEffectView(material: .hudWindow, blendingMode: .behindWindow))
         .cornerRadius(12)
         .shadow(color: .black.opacity(0.4), radius: 20, x: 0, y: 10)
@@ -169,6 +175,7 @@ struct ClipboardWindowContent: View {
     @Binding var selectedTab: ClipboardTab
     let searchText: String
     @Binding var selectedItemID: UUID?
+    let onActivate: (ClipboardItem) -> Void
     @ObservedObject var clipboardManager = ClipboardManager.shared
     
     var filteredItems: [ClipboardItem] {
@@ -187,7 +194,9 @@ struct ClipboardWindowContent: View {
                                 ClipboardWindowItemRow(
                                     item: item,
                                     tab: selectedTab,
-                                    isSelected: selectedItemID == item.id
+                                    isSelected: selectedItemID == item.id,
+                                    onSelect: { selectedItemID = item.id },
+                                    onActivate: { onActivate(item) }
                                 )
                                 .id(item.id)
                             }
@@ -244,6 +253,8 @@ struct ClipboardWindowItemRow: View {
     let item: ClipboardItem
     let tab: ClipboardTab
     let isSelected: Bool
+    let onSelect: () -> Void
+    let onActivate: () -> Void
     @ObservedObject var clipboardManager = ClipboardManager.shared
     @State private var isHovering = false
     
@@ -252,13 +263,9 @@ struct ClipboardWindowItemRow: View {
     }
     
     var body: some View {
-        HStack(alignment: .top, spacing: 12) {
-            // Type icon
-            Image(systemName: item.type.icon)
-                .font(.system(size: 14))
-                .foregroundColor(.blue)
-                .frame(width: 20)
-            
+        HStack(alignment: .center, spacing: 12) {
+            ClipboardItemLeadingPreview(item: item)
+
             // Content
             VStack(alignment: .leading, spacing: 4) {
                 Text(item.preview)
@@ -327,16 +334,20 @@ struct ClipboardWindowItemRow: View {
             RoundedRectangle(cornerRadius: 6)
                 .fill(isSelected ? Color.accentColor.opacity(0.22) : (isHovering ? Color.gray.opacity(0.1) : Color.clear))
         )
+        .contentShape(Rectangle())
         .onHover { hovering in
             withAnimation(.easeInOut(duration: 0.2)) {
                 isHovering = hovering
             }
         }
-        .onTapGesture {
-            clipboardManager.copyToClipboard(item)
+        .onTapGesture(count: 2) {
+            onActivate()
+        }
+        .onTapGesture(count: 1) {
+            onSelect()
         }
     }
-    
+
     private func timeAgoString(from date: Date) -> String {
         let interval = Date().timeIntervalSince(date)
         
@@ -357,6 +368,6 @@ struct ClipboardWindowItemRow: View {
 
 #Preview {
     ClipboardWindow()
-        .frame(width: 420, height: 520)
+        .frame(width: 960, height: 650)
         .background(Color.gray.opacity(0.3))
 }

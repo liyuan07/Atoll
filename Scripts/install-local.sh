@@ -55,11 +55,9 @@ tccutil reset Accessibility com.Ebullioscopic.Atoll.dev 2>/dev/null || true
 
 open "$INSTALLED_APP"
 
-USAGE_PLUGIN="$HOME/Desktop/code/AtollCodexUsage/build/AtollCodexUsage.app"
-if [[ -d "$USAGE_PLUGIN" ]]; then
-  pkill -x AtollCodexUsage 2>/dev/null || true
-  open "$USAGE_PLUGIN"
-fi
+# Codex Usage is hosted by Atoll itself. Stop any legacy standalone helper so
+# there is only one refresh timer and one source of extension state.
+pkill -x AtollCodexUsage 2>/dev/null || true
 
 VERSION=$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$INSTALLED_APP/Contents/Info.plist")
 BUILD=$(/usr/libexec/PlistBuddy -c 'Print :CFBundleVersion' "$INSTALLED_APP/Contents/Info.plist")

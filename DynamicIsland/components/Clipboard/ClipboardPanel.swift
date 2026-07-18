@@ -153,26 +153,39 @@ class ClipboardPanel: NSPanel {
         applyClipboardCornerMask(hostingView, radius: 12)
         self.contentView = hostingView
         
-        // Set initial size
-        let preferredSize = CGSize(width: 420, height: 520)
+        let preferredSize = preferredContentSize()
         hostingView.setFrameSize(preferredSize)
         setContentSize(preferredSize)
     }
+
+    private func screenAtPointer() -> NSScreen? {
+        let mouseLocation = NSEvent.mouseLocation
+        return NSScreen.screens.first(where: { $0.frame.contains(mouseLocation) }) ?? NSScreen.main
+    }
+
+    private func preferredContentSize() -> CGSize {
+        guard let screen = screenAtPointer() else {
+            return CGSize(width: 960, height: 650)
+        }
+
+        let visibleSize = screen.visibleFrame.size
+        return CGSize(
+            width: min(max(visibleSize.width * 0.70, 760), visibleSize.width * 0.94),
+            height: min(max(visibleSize.height * 0.78, 560), visibleSize.height * 0.94)
+        )
+    }
     
     func positionNearNotch() {
-        guard let screen = NSScreen.main else { return }
+        guard let screen = screenAtPointer() else { return }
         
         let screenFrame = screen.visibleFrame
         let panelFrame = frame
         
         // Check if we have a saved position
-        if let savedPosition = getSavedPosition() {
-            // Validate saved position is still on screen
-            let savedFrame = NSRect(origin: savedPosition, size: panelFrame.size)
-            if screenFrame.intersects(savedFrame) {
-                setFrameOrigin(savedPosition)
-                return
-            }
+        if let savedPosition = getSavedPosition(for: panelFrame.size),
+           screenFrame.contains(NSRect(origin: savedPosition, size: panelFrame.size)) {
+            setFrameOrigin(savedPosition)
+            return
         }
         
         // Default to center of screen (not top center)
@@ -182,16 +195,18 @@ class ClipboardPanel: NSPanel {
         setFrameOrigin(NSPoint(x: xPosition, y: yPosition))
     }
     
-    private func getSavedPosition() -> NSPoint? {
+    private func getSavedPosition(for panelSize: NSSize) -> NSPoint? {
         let defaults = UserDefaults.standard
         let x = defaults.double(forKey: "clipboardPanelPositionX")
         let y = defaults.double(forKey: "clipboardPanelPositionY")
+        let savedWidth = defaults.double(forKey: "clipboardPanelPositionWidth")
+        let savedHeight = defaults.double(forKey: "clipboardPanelPositionHeight")
         
-        // Check if we have valid saved coordinates (not default 0.0)
-        if x != 0.0 || y != 0.0 {
-            return NSPoint(x: x, y: y)
-        }
-        return nil
+        guard x != 0.0 || y != 0.0,
+              abs(savedWidth - panelSize.width) < 1,
+              abs(savedHeight - panelSize.height) < 1
+        else { return nil }
+        return NSPoint(x: x, y: y)
     }
     
     private func saveCurrentPosition() {
@@ -199,6 +214,8 @@ class ClipboardPanel: NSPanel {
         let defaults = UserDefaults.standard
         defaults.set(currentOrigin.x, forKey: "clipboardPanelPositionX")
         defaults.set(currentOrigin.y, forKey: "clipboardPanelPositionY")
+        defaults.set(frame.width, forKey: "clipboardPanelPositionWidth")
+        defaults.set(frame.height, forKey: "clipboardPanelPositionHeight")
     }
     
     override func setFrameOrigin(_ point: NSPoint) {
@@ -212,7 +229,7 @@ class ClipboardPanel: NSPanel {
         let panelFrame = frame
         
         // Position near mouse but ensure it stays on screen
-        guard let screen = NSScreen.main else { return }
+        guard let screen = screenAtPointer() else { return }
         let screenFrame = screen.visibleFrame
         
         var xPosition = mouseLocation.x - panelFrame.width / 2
@@ -254,6 +271,11 @@ struct ClipboardPanelView: View {
         guard let selectedItemID,
               let item = filteredItems.first(where: { $0.id == selectedItemID })
         else { return }
+        activate(item)
+    }
+
+    private func activate(_ item: ClipboardItem) {
+        selectedItemID = item.id
         clipboardManager.activateItem(item)
         onClose()
         ClipboardPasteCoordinator.shared.pasteIntoCapturedApplication()
@@ -288,10 +310,11 @@ struct ClipboardPanelView: View {
                                     item: item,
                                     isHovered: hoveredItemId == item.id,
                                     isSelected: selectedItemID == item.id,
-                                    isPinned: clipboardManager.pinnedItems.contains(where: { $0.id == item.id })
-                                ) { hoverId in
-                                    hoveredItemId = hoverId
-                                }
+                                    isPinned: clipboardManager.pinnedItems.contains(where: { $0.id == item.id }),
+                                    onHover: { hoveredItemId = $0 },
+                                    onSelect: { selectedItemID = item.id },
+                                    onActivate: { activate(item) }
+                                )
                                 .id(item.id)
                             }
                         }
@@ -306,7 +329,7 @@ struct ClipboardPanelView: View {
                 }
             }
         }
-        .frame(width: 420, height: 520)
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
         .background(VisualEffectView(material: .hudWindow, blendingMode: .behindWindow))
         .cornerRadius(12)
         .shadow(color: .black.opacity(0.4), radius: 20, x: 0, y: 10)
@@ -448,16 +471,14 @@ struct ClipboardPanelItemRow: View {
     let isSelected: Bool
     let isPinned: Bool
     let onHover: (UUID?) -> Void
+    let onSelect: () -> Void
+    let onActivate: () -> Void
     @ObservedObject var clipboardManager = ClipboardManager.shared
     @State private var justCopied = false
     
     var body: some View {
-        HStack(alignment: .top, spacing: 12) {
-            // Type icon
-            Image(systemName: item.type.icon)
-                .font(.system(size: 14))
-                .foregroundColor(.blue)
-                .frame(width: 20)
+        HStack(alignment: .center, spacing: 12) {
+            ClipboardItemLeadingPreview(item: item)
             
             // Content
             VStack(alignment: .leading, spacing: 4) {
@@ -541,13 +562,17 @@ struct ClipboardPanelItemRow: View {
             RoundedRectangle(cornerRadius: 6)
                 .fill(isSelected ? Color.accentColor.opacity(0.22) : (isHovered ? Color.gray.opacity(0.1) : Color.clear))
         )
+        .contentShape(Rectangle())
         .onHover { hovering in
             withAnimation(.easeInOut(duration: 0.2)) {
                 onHover(hovering ? item.id : nil)
             }
         }
-        .onTapGesture {
-            clipboardManager.copyToClipboard(item)
+        .onTapGesture(count: 2) {
+            onActivate()
+        }
+        .onTapGesture(count: 1) {
+            onSelect()
         }
     }
     

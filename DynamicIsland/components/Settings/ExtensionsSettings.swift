@@ -175,6 +175,7 @@ private struct ExtensionEntryRow: View {
     @ObservedObject private var liveActivityManager = ExtensionLiveActivityManager.shared
     @ObservedObject private var widgetManager = ExtensionLockScreenWidgetManager.shared
     @ObservedObject private var notchExperienceManager = ExtensionNotchExperienceManager.shared
+    @ObservedObject private var codexUsageManager = CodexUsageIntegrationManager.shared
     let entry: ExtensionAuthorizationEntry
     let onRemove: () -> Void
     
@@ -194,20 +195,51 @@ private struct ExtensionEntryRow: View {
                     Text(entry.bundleIdentifier)
                         .font(.system(size: 11))
                         .foregroundStyle(.secondary)
+                    if isBuiltInCodexUsage {
+                        HStack(spacing: 4) {
+                            Circle()
+                                .fill(codexUsageManager.isRunning ? Color.green : Color.secondary)
+                                .frame(width: 6, height: 6)
+                            Text("Built into Atoll · \(codexUsageManager.status)")
+                                .font(.system(size: 10))
+                                .foregroundStyle(
+                                    codexUsageManager.isRunning ? Color.green : Color.secondary
+                                )
+                                .lineLimit(1)
+                        }
+                    }
                 }
                 
                 Spacer()
 
                 Toggle("Enable in Atoll", isOn: Binding(
-                    get: { authManager.isExtensionEnabled(bundleIdentifier: entry.bundleIdentifier) },
+                    get: {
+                        if isBuiltInCodexUsage {
+                            return codexUsageManager.isRunning
+                        }
+                        return authManager.isExtensionEnabled(
+                            bundleIdentifier: entry.bundleIdentifier
+                        )
+                    },
                     set: { enabled in
-                        authManager.setExtensionEnabled(bundleIdentifier: entry.bundleIdentifier, enabled: enabled)
+                        if isBuiltInCodexUsage {
+                            codexUsageManager.setEnabledFromSettings(enabled)
+                        } else {
+                            authManager.setExtensionEnabled(
+                                bundleIdentifier: entry.bundleIdentifier,
+                                enabled: enabled
+                            )
+                        }
                     }
                 ))
                 .labelsHidden()
                 .toggleStyle(.switch)
                 .disabled(!entry.isAuthorized)
-                .help("Show or hide this extension in Atoll without removing its authorization")
+                .help(
+                    isBuiltInCodexUsage
+                        ? "Start or stop Codex usage updates in the Atoll background process"
+                        : "Show or hide this extension in Atoll without removing its authorization"
+                )
                 
                 // Expand button
                 Button {
@@ -237,6 +269,10 @@ private struct ExtensionEntryRow: View {
             }
         }
         .padding(.vertical, 8)
+    }
+
+    private var isBuiltInCodexUsage: Bool {
+        entry.bundleIdentifier == CodexUsageIntegrationManager.bundleIdentifier
     }
     
     private var statusIndicator: some View {
@@ -429,6 +465,15 @@ private struct ExtensionEntryRow: View {
     
     private var actionButtons: some View {
         HStack(spacing: 8) {
+            if isBuiltInCodexUsage, entry.isAuthorized {
+                Button("Refresh Now") {
+                    codexUsageManager.refreshNow()
+                }
+                .buttonStyle(.bordered)
+                .controlSize(.small)
+                .disabled(!codexUsageManager.isRunning || codexUsageManager.isRefreshing)
+            }
+
             switch entry.status {
             case .pending:
                 Button("Authorize") {
@@ -463,12 +508,14 @@ private struct ExtensionEntryRow: View {
             
             resetMenu
 
-            Button("Remove") {
-                onRemove()
+            if !isBuiltInCodexUsage {
+                Button("Remove") {
+                    onRemove()
+                }
+                .buttonStyle(.bordered)
+                .controlSize(.small)
+                .tint(.red)
             }
-            .buttonStyle(.bordered)
-            .controlSize(.small)
-            .tint(.red)
         }
     }
 
