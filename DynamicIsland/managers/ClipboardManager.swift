@@ -451,11 +451,11 @@ class ClipboardManager: ObservableObject {
         lastChangeCount = currentChangeCount
         
         guard let clipboardItem = getCurrentClipboardItem() else { return }
-        
-        // Don't add duplicate items
-        if !clipboardHistory.contains(where: { isSameContent($0, clipboardItem) }) {
-            addToHistory(clipboardItem)
-        }
+
+        // Re-copying an existing item should promote it to the top. addToHistory
+        // removes the older matching entry and its payload before inserting this
+        // freshly captured item, so duplicate images do not leak orphaned files.
+        addToHistory(clipboardItem)
     }
     
     private func getCurrentClipboardItem() -> ClipboardItem? {
