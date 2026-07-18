@@ -43,7 +43,7 @@ enum MusicControlButton: String, CaseIterable, Identifiable, Codable, Defaults.S
         .trackBackward,
         .playPause,
         .trackForward,
-        .repeatMode
+        .mediaOutput
     ]
 
     static let minimalLayout: [MusicControlButton] = [

@@ -818,7 +818,7 @@ extension Defaults.Keys {
     )
     static let nonNotchHeight = Key<CGFloat>("nonNotchHeight", default: 32)
     static let notchHeight = Key<CGFloat>("notchHeight", default: 32)
-    static let openNotchWidth = Key<CGFloat>("openNotchWidth", default: 640)
+    static let openNotchWidth = Key<CGFloat>("openNotchWidth", default: 690)
         //static let openLastTabByDefault = Key<Bool>("openLastTabByDefault", default: false)
     
         // MARK: Appearance
@@ -853,7 +853,7 @@ extension Defaults.Keys {
     static let selectedAppIconID = Key<String?>("selectedAppIconID", default: nil)
     
         // MARK: Gestures
-    static let enableGestures = Key<Bool>("enableGestures", default: true)
+    static let enableGestures = Key<Bool>("enableGestures", default: false)
     static let closeGestureEnabled = Key<Bool>("closeGestureEnabled", default: true)
     static let gestureSensitivity = Key<CGFloat>("gestureSensitivity", default: 200.0)
     static let enableHorizontalMusicGestures = Key<Bool>("enableHorizontalMusicGestures", default: true)
@@ -873,7 +873,7 @@ extension Defaults.Keys {
     static let showShuffleAndRepeat = Key<Bool>("showShuffleAndRepeat", default: true)
     static let showMediaOutputControl = Key<Bool>("showMediaOutputControl", default: true)
     static let musicAuxLeftControl = Key<MusicAuxiliaryControl>("musicAuxLeftControl", default: .shuffle)
-    static let musicAuxRightControl = Key<MusicAuxiliaryControl>("musicAuxRightControl", default: .repeatMode)
+    static let musicAuxRightControl = Key<MusicAuxiliaryControl>("musicAuxRightControl", default: .mediaOutput)
     static let didMigrateMusicAuxControls = Key<Bool>("didMigrateMusicAuxControls", default: false)
     static let musicControlSlots = Key<[MusicControlButton]>("musicControlSlots", default: MusicControlButton.defaultLayout)
     static let didMigrateMusicControlSlots = Key<Bool>("didMigrateMusicControlSlots", default: false)
@@ -909,7 +909,7 @@ extension Defaults.Keys {
     static let lockScreenGlassStyle = Key<LockScreenGlassStyle>("lockScreenGlassStyle", default: .liquid)
     static let lockScreenGlassCustomizationMode = Key<LockScreenGlassCustomizationMode>(
         "lockScreenGlassCustomizationMode",
-        default: .standard
+        default: .customLiquid
     )
     static let lockScreenTimerGlassStyle = Key<LockScreenGlassStyle>("lockScreenTimerGlassStyle", default: .frosted)
     static let lockScreenTimerGlassCustomizationMode = Key<LockScreenGlassCustomizationMode>(
@@ -918,7 +918,7 @@ extension Defaults.Keys {
     )
     static let lockScreenMusicLiquidGlassVariant = Key<LiquidGlassVariant>(
         "lockScreenMusicLiquidGlassVariant",
-        default: .defaultVariant
+        default: .v11
     )
     static let lockScreenTimerLiquidGlassVariant = Key<LiquidGlassVariant>(
         "lockScreenTimerLiquidGlassVariant",
@@ -1041,14 +1041,14 @@ extension Defaults.Keys {
     static let useBluetoothHUD3DIcon = Key<Bool>("useBluetoothHUD3DIcon", default: true)
     
     // MARK: Stats Feature
-    static let enableStatsFeature = Key<Bool>("enableStatsFeature", default: false)
+    static let enableStatsFeature = Key<Bool>("enableStatsFeature", default: true)
     static let autoStartStatsMonitoring = Key<Bool>("autoStartStatsMonitoring", default: true)
     static let statsStopWhenNotchCloses = Key<Bool>("statsStopWhenNotchCloses", default: true)
-    static let statsUpdateInterval = Key<Double>("statsUpdateInterval", default: 1.0)
+    static let statsUpdateInterval = Key<Double>("statsUpdateInterval", default: 3.0)
     static let showCpuGraph = Key<Bool>("showCpuGraph", default: true)
     static let showMemoryGraph = Key<Bool>("showMemoryGraph", default: true)
     static let showGpuGraph = Key<Bool>("showGpuGraph", default: true)
-    static let showNetworkGraph = Key<Bool>("showNetworkGraph", default: false)
+    static let showNetworkGraph = Key<Bool>("showNetworkGraph", default: true)
     static let showDiskGraph = Key<Bool>("showDiskGraph", default: false)
     static let cpuTemperatureUnit = Key<LockScreenWeatherTemperatureUnit>("cpuTemperatureUnit", default: .celsius)
     
@@ -1087,10 +1087,10 @@ extension Defaults.Keys {
     static let reminderPresentationStyle = Key<ReminderPresentationStyle>("reminderPresentationStyle", default: .ringCountdown)
     static let reminderLeadTime = Key<Int>("reminderLeadTime", default: 5)
     static let reminderSneakPeekDuration = Key<Double>("reminderSneakPeekDuration", default: 5)
-    static let timerControlWindowEnabled = Key<Bool>("timerControlWindowEnabled", default: true)
+    static let timerControlWindowEnabled = Key<Bool>("timerControlWindowEnabled", default: false)
     
     // MARK: ColorPicker Feature
-    static let enableColorPickerFeature = Key<Bool>("enableColorPickerFeature", default: true)
+    static let enableColorPickerFeature = Key<Bool>("enableColorPickerFeature", default: false)
     static let showColorFormats = Key<Bool>("showColorFormats", default: true)
     static let colorPickerDisplayMode = Key<ColorPickerDisplayMode>("colorPickerDisplayMode", default: .panel)
     static let colorHistorySize = Key<Int>("colorHistorySize", default: 10)
@@ -1105,7 +1105,7 @@ extension Defaults.Keys {
     static let clipboardDisplayMode = Key<ClipboardDisplayMode>("clipboardDisplayMode", default: .panel)
     
     // MARK: Screen Assistant Feature
-    static let enableScreenAssistant = Key<Bool>("enableScreenAssistant", default: true)
+    static let enableScreenAssistant = Key<Bool>("enableScreenAssistant", default: false)
     static let screenAssistantDisplayMode = Key<ScreenAssistantDisplayMode>("screenAssistantDisplayMode", default: .panel)
     static let geminiApiKey = Key<String>("geminiApiKey", default: "")
     static let openaiApiKey = Key<String>("openaiApiKey", default: "")
@@ -1247,7 +1247,7 @@ extension Defaults.Keys {
     static let showLiveCanvasInDynamicIsland = Key<Bool>("showLiveCanvasInDynamicIsland", default: false)
     
     // MARK: Notes Feature
-    static let enableNotes = Key<Bool>("enableNotes", default: false)
+    static let enableNotes = Key<Bool>("enableNotes", default: true)
     static let enableNotePinning = Key<Bool>("enableNotePinning", default: true)
     static let enableNoteSearch = Key<Bool>("enableNoteSearch", default: false)
     static let enableNoteColorFiltering = Key<Bool>("enableNoteColorFiltering", default: false)
