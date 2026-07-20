@@ -253,6 +253,8 @@ struct ClipboardPanelView: View {
     @State private var selectedItemID: UUID?
     @State private var selectedItemIDs = Set<UUID>()
     @State private var selectedGroupID: UUID?
+    @State private var shouldScrollItemSelectionIntoView = false
+    @State private var shouldScrollGroupSelectionIntoView = false
     
     var filteredItems: [ClipboardItem] {
         fuzzyMatchedClipboardItems(query: searchText, items: selectedTab.items(from: clipboardManager))
@@ -268,12 +270,14 @@ struct ClipboardPanelView: View {
             selectedTab = movedClipboardTab(from: selectedTab, direction: direction)
         case .up, .down:
             if selectedTab == .groups {
+                shouldScrollGroupSelectionIntoView = true
                 selectedGroupID = movedClipboardGroupSelection(
                     from: selectedGroupID,
                     direction: direction,
                     groups: filteredGroups
                 )
             } else {
+                shouldScrollItemSelectionIntoView = true
                 selectedItemID = movedClipboardSelection(
                     from: selectedItemID,
                     direction: direction,
@@ -298,11 +302,7 @@ struct ClipboardPanelView: View {
         let selectedItems = filteredItems.filter { selectedItemIDs.contains($0.id) }
         if selectedItems.count > 1 {
             guard let group = clipboardManager.createGroup(from: selectedItems) else { return }
-            selectedItemIDs.removeAll()
-            selectedItemID = nil
-            selectedTab = .groups
-            selectedGroupID = group.id
-            searchText = ""
+            activate(group)
             return
         }
 
@@ -323,10 +323,14 @@ struct ClipboardPanelView: View {
         selectedGroupID = group.id
         clipboardManager.activateGroup(group)
         onClose()
-        ClipboardPasteCoordinator.shared.pasteIntoCapturedApplication()
+        ClipboardPasteCoordinator.shared.pasteGroupIntoCapturedApplication(group)
     }
 
     private func select(_ item: ClipboardItem, extendingSelection: Bool) {
+        // Mouse selection must never drive ScrollViewReader. Re-centering every
+        // clicked row made cross-screen Command selection jump back and feel as
+        // if multi-selection had exited.
+        shouldScrollItemSelectionIntoView = false
         if extendingSelection {
             if selectedItemIDs.contains(item.id) {
                 selectedItemIDs.remove(item.id)
@@ -343,7 +347,14 @@ struct ClipboardPanelView: View {
         }
     }
 
+    private func select(_ group: ClipboardGroup) {
+        shouldScrollGroupSelectionIntoView = false
+        selectedGroupID = group.id
+    }
+
     private func resetSelection() {
+        shouldScrollItemSelectionIntoView = false
+        shouldScrollGroupSelectionIntoView = false
         selectedItemIDs.removeAll()
         selectedItemID = nil
         selectedGroupID = nil
@@ -376,7 +387,7 @@ struct ClipboardPanelView: View {
                         .foregroundColor(.accentColor)
                     Text("已选择 \(selectedItemIDs.count) 项")
                         .font(.system(size: 11, weight: .semibold))
-                    Text("按 Enter 保存到分组")
+                    Text("按 Enter 保存为分组并直接粘贴")
                         .font(.system(size: 11))
                         .foregroundColor(.secondary)
                     Spacer()
@@ -407,7 +418,7 @@ struct ClipboardPanelView: View {
                                         isHovered: hoveredItemId == group.id,
                                         isSelected: selectedGroupID == group.id,
                                         onHover: { hoveredItemId = $0 },
-                                        onSelect: { selectedGroupID = group.id },
+                                        onSelect: { select(group) },
                                         onActivate: { activate(group) }
                                     )
                                     .id(group.id)
@@ -416,7 +427,8 @@ struct ClipboardPanelView: View {
                             .padding(.vertical, 8)
                         }
                         .onChange(of: selectedGroupID) { _, groupID in
-                            guard let groupID else { return }
+                            guard shouldScrollGroupSelectionIntoView, let groupID else { return }
+                            shouldScrollGroupSelectionIntoView = false
                             withAnimation(.easeOut(duration: 0.12)) {
                                 proxy.scrollTo(groupID, anchor: .center)
                             }
@@ -450,7 +462,8 @@ struct ClipboardPanelView: View {
                         .padding(.vertical, 8)
                     }
                     .onChange(of: selectedItemID) { _, itemID in
-                        guard let itemID else { return }
+                        guard shouldScrollItemSelectionIntoView, let itemID else { return }
+                        shouldScrollItemSelectionIntoView = false
                         withAnimation(.easeOut(duration: 0.12)) {
                             proxy.scrollTo(itemID, anchor: .center)
                         }
@@ -619,6 +632,7 @@ struct ClipboardPanelItemRow: View {
     let onActivate: () -> Void
     @ObservedObject var clipboardManager = ClipboardManager.shared
     @State private var justCopied = false
+    @State private var lastTapDate = Date.distantPast
     
     var body: some View {
         HStack(alignment: .center, spacing: 12) {
@@ -712,11 +726,27 @@ struct ClipboardPanelItemRow: View {
                 onHover(hovering ? item.id : nil)
             }
         }
-        .onTapGesture(count: 2) {
-            onActivate()
+        // A competing double-click recognizer delays the single-click callback
+        // until the system double-click interval expires. It also reads the
+        // modifier flags too late, after Command may already have been released.
+        .onTapGesture {
+            handleTap()
         }
-        .onTapGesture(count: 1) {
-            onSelect(NSEvent.modifierFlags.contains(.command))
+    }
+
+    private func handleTap() {
+        let isExtendingSelection = NSEvent.modifierFlags.contains(.command)
+        let tapDate = Date()
+
+        if isExtendingSelection {
+            lastTapDate = .distantPast
+            onSelect(true)
+        } else if tapDate.timeIntervalSince(lastTapDate) <= NSEvent.doubleClickInterval {
+            lastTapDate = .distantPast
+            onActivate()
+        } else {
+            lastTapDate = tapDate
+            onSelect(false)
         }
     }
     
@@ -747,6 +777,7 @@ struct ClipboardPanelGroupRow: View {
     let onActivate: () -> Void
     @ObservedObject var clipboardManager = ClipboardManager.shared
     @State private var justCopied = false
+    @State private var lastTapDate = Date.distantPast
 
     var body: some View {
         HStack(alignment: .center, spacing: 12) {
@@ -837,11 +868,15 @@ struct ClipboardPanelGroupRow: View {
                 onHover(hovering ? group.id : nil)
             }
         }
-        .onTapGesture(count: 2) {
-            onActivate()
-        }
-        .onTapGesture(count: 1) {
-            onSelect()
+        .onTapGesture {
+            let tapDate = Date()
+            if tapDate.timeIntervalSince(lastTapDate) <= NSEvent.doubleClickInterval {
+                lastTapDate = .distantPast
+                onActivate()
+            } else {
+                lastTapDate = tapDate
+                onSelect()
+            }
         }
     }
 

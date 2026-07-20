@@ -66,7 +66,7 @@ struct ClipboardPopover: View {
             else { return }
             clipboardManager.activateGroup(group)
             dismiss()
-            ClipboardPasteCoordinator.shared.pasteIntoCapturedApplication()
+            ClipboardPasteCoordinator.shared.pasteGroupIntoCapturedApplication(group)
             return
         }
 
@@ -113,7 +113,7 @@ struct ClipboardPopover: View {
                                         onActivate: {
                                             clipboardManager.activateGroup(group)
                                             dismiss()
-                                            ClipboardPasteCoordinator.shared.pasteIntoCapturedApplication()
+                                            ClipboardPasteCoordinator.shared.pasteGroupIntoCapturedApplication(group)
                                         }
                                     )
                                     .id(group.id)

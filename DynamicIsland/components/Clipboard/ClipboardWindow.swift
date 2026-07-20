@@ -83,7 +83,7 @@ struct ClipboardWindow: View {
         selectedGroupID = group.id
         clipboardManager.activateGroup(group)
         ClipboardWindowManager.shared.hideClipboardWindow()
-        ClipboardPasteCoordinator.shared.pasteIntoCapturedApplication()
+        ClipboardPasteCoordinator.shared.pasteGroupIntoCapturedApplication(group)
     }
     
     var body: some View {
