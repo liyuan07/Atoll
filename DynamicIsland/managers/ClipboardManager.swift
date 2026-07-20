@@ -117,6 +117,13 @@ struct ClipboardItem: Identifiable, Codable {
         return try? Data(contentsOf: fileURL)
     }
 
+    var imageFileURL: URL? {
+        guard let fileName = imageFileName else { return nil }
+        let fileURL = ClipboardManager.clipboardDataDirectory.appendingPathComponent(fileName)
+        guard FileManager.default.fileExists(atPath: fileURL.path) else { return nil }
+        return fileURL
+    }
+
     var imagePasteboardType: NSPasteboard.PasteboardType {
         guard let fileExtension = imageFileName.map({ URL(fileURLWithPath: $0).pathExtension }),
               let type = UTType(filenameExtension: fileExtension) else {
@@ -387,6 +394,11 @@ class ClipboardManager: ObservableObject {
         }
         guard !preparedItems.isEmpty else { return false }
 
+        addMultiImageFileRepresentations(
+            to: preparedItems,
+            for: group.items
+        )
+
         // Group activation is also an intentional pasteboard write, so it must
         // preserve any external copy that arrived between monitor ticks.
         captureCurrentClipboardChangeIfNeeded()
@@ -421,19 +433,30 @@ class ClipboardManager: ObservableObject {
         let uniqueItems = items.filter { seenIDs.insert($0.id).inserted }
         guard uniqueItems.count > 1 else { return nil }
 
+        if let existingIndex = groups.firstIndex(where: {
+            hasSameGroupItems($0.items, uniqueItems)
+        }) {
+            let existingGroup = groups.remove(at: existingIndex)
+            groups.insert(existingGroup, at: 0)
+            saveArchive()
+            return existingGroup
+        }
+
         let group = ClipboardGroup(items: uniqueItems)
         groups.insert(group, at: 0)
         saveArchive()
         return group
     }
 
-    func activateGroup(_ group: ClipboardGroup) {
-        guard copyGroupToClipboard(group) else { return }
+    @discardableResult
+    func activateGroup(_ group: ClipboardGroup) -> Bool {
+        guard copyGroupToClipboard(group) else { return false }
         if let index = groups.firstIndex(where: { $0.id == group.id }) {
             let promotedGroup = groups.remove(at: index)
             groups.insert(promotedGroup, at: 0)
         }
         saveArchive()
+        return true
     }
 
     func deleteGroup(_ group: ClipboardGroup) {
@@ -607,6 +630,49 @@ class ClipboardManager: ObservableObject {
                 }
                 return pasteboardItem.types.isEmpty ? [] : [pasteboardItem]
             }
+        }
+    }
+
+    /// Image groups should look like files copied together in Finder as well as
+    /// raw image objects. Applications such as Codex enumerate every file URL
+    /// from a single paste event, while they often consume only the first raw
+    /// image pasteboard item.
+    private func addMultiImageFileRepresentations(
+        to preparedItems: [NSPasteboardItem],
+        for items: [ClipboardItem]
+    ) {
+        guard items.count > 1,
+              items.allSatisfy({ $0.type == .image })
+        else { return }
+
+        let imageURLs = items.compactMap(\.imageFileURL)
+        guard imageURLs.count == items.count,
+              preparedItems.count == items.count
+        else { return }
+
+        for (pasteboardItem, imageURL) in zip(preparedItems, imageURLs) {
+            pasteboardItem.setString(imageURL.absoluteString, forType: .fileURL)
+        }
+
+        // Keep the legacy Finder representation on the first item because some
+        // destinations still request one property-list containing every path.
+        preparedItems.first?.setPropertyList(
+            imageURLs.map(\.path),
+            forType: NSPasteboard.PasteboardType("NSFilenamesPboardType")
+        )
+    }
+
+    private func hasSameGroupItems(
+        _ lhs: [ClipboardItem],
+        _ rhs: [ClipboardItem]
+    ) -> Bool {
+        guard lhs.count == rhs.count else { return false }
+        return zip(lhs, rhs).allSatisfy { left, right in
+            left.type == right.type
+                && left.stringData == right.stringData
+                && left.imageFileName == right.imageFileName
+                && left.fileURLs == right.fileURLs
+                && left.rtfFileName == right.rtfFileName
         }
     }
     
@@ -864,11 +930,24 @@ class ClipboardManager: ObservableObject {
 
     private func performDatabaseMaintenance() {
         removeItemsWithMissingImagePayloads()
+        removeDuplicateGroups()
         removeExpiredItems()
         trimHistoryToLimit()
         cleanupOldFiles()
         lastMaintenanceDate = Date()
         saveArchive()
+    }
+
+    /// Keep the newest occurrence when older versions created the same group
+    /// more than once after repeated Enter events.
+    private func removeDuplicateGroups() {
+        var uniqueGroups: [ClipboardGroup] = []
+        for group in groups where !uniqueGroups.contains(where: {
+            hasSameGroupItems($0.items, group.items)
+        }) {
+            uniqueGroups.append(group)
+        }
+        groups = uniqueGroups
     }
 
     // MARK: - Persistence

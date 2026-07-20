@@ -17,12 +17,12 @@ final class ClipboardPasteCoordinator {
 
     private var targetApplication: NSRunningApplication?
     private var pasteTask: Task<Void, Never>?
+    private var pasteGeneration: UInt64 = 0
 
     private init() {}
 
     func captureCurrentApplication() {
-        pasteTask?.cancel()
-        pasteTask = nil
+        cancelPendingPaste()
         guard let application = NSWorkspace.shared.frontmostApplication,
               application.bundleIdentifier != Bundle.main.bundleIdentifier
         else { return }
@@ -30,6 +30,8 @@ final class ClipboardPasteCoordinator {
     }
 
     func pasteIntoCapturedApplication() {
+        cancelPendingPaste()
+        let generation = pasteGeneration
         guard let application = targetApplication, !application.isTerminated else {
             targetApplication = nil
             return
@@ -37,46 +39,52 @@ final class ClipboardPasteCoordinator {
         targetApplication = nil
 
         application.activate()
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.18) {
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.18) { [weak self] in
+            guard self?.pasteGeneration == generation else { return }
             Self.postPasteShortcut()
         }
     }
 
     /// Paste a group into the previously focused application.
     ///
-    /// Text-only groups are represented by ClipboardManager as one combined
-    /// pasteboard item, so one Command-V is sufficient. Many applications read
-    /// only the first object when a pasteboard contains several image or file
-    /// objects. For those groups, write and paste each logical item in order,
-    /// then restore the complete group representation to the pasteboard.
+    /// Same-type groups use one immutable pasteboard snapshot and one paste
+    /// command. Mixed groups are replayed sequentially with generation checks,
+    /// so a newer choice cannot be overwritten by an older delayed paste task.
     func pasteGroupIntoCapturedApplication(_ group: ClipboardGroup) {
-        let canPasteInSingleOperation = group.items.allSatisfy {
+        let isTextOnly = group.items.allSatisfy {
             [.text, .url, .rtf, .unknown].contains($0.type)
         }
+        let isImageOnly = group.items.allSatisfy { $0.type == .image }
+        let isFileOnly = group.items.allSatisfy { $0.type == .file }
+        let canPasteInSingleOperation = isTextOnly || isImageOnly || isFileOnly
         guard !canPasteInSingleOperation else {
             pasteIntoCapturedApplication()
             return
         }
 
+        cancelPendingPaste()
         guard let application = targetApplication, !application.isTerminated else {
             targetApplication = nil
             return
         }
         targetApplication = nil
 
-        pasteTask?.cancel()
+        let generation = pasteGeneration
         pasteTask = Task { @MainActor [weak self] in
             application.activate()
-            guard await Self.waitForPasteTarget(nanoseconds: 180_000_000) else {
+            guard await Self.waitForPasteTarget(nanoseconds: 180_000_000),
+                  self?.pasteGeneration == generation else {
                 return
             }
 
             for item in group.items {
-                guard !Task.isCancelled else { return }
+                guard !Task.isCancelled,
+                      self?.pasteGeneration == generation else { return }
                 guard ClipboardManager.shared.copyToClipboard(item) else { continue }
 
                 Self.postPasteShortcut()
-                guard await Self.waitForPasteTarget(nanoseconds: 280_000_000) else {
+                guard await Self.waitForPasteTarget(nanoseconds: 500_000_000),
+                      self?.pasteGeneration == generation else {
                     return
                 }
             }
@@ -84,8 +92,16 @@ final class ClipboardPasteCoordinator {
             // Keep the group itself on the clipboard after the sequential paste
             // finishes, matching the behavior of text-only group activation.
             _ = ClipboardManager.shared.copyGroupToClipboard(group)
-            self?.pasteTask = nil
+            if self?.pasteGeneration == generation {
+                self?.pasteTask = nil
+            }
         }
+    }
+
+    private func cancelPendingPaste() {
+        pasteGeneration &+= 1
+        pasteTask?.cancel()
+        pasteTask = nil
     }
 
     private static func waitForPasteTarget(nanoseconds: UInt64) async -> Bool {

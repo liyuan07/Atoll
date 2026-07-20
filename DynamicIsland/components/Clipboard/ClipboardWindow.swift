@@ -81,7 +81,7 @@ struct ClipboardWindow: View {
 
     private func activate(_ group: ClipboardGroup) {
         selectedGroupID = group.id
-        clipboardManager.activateGroup(group)
+        guard clipboardManager.activateGroup(group) else { return }
         ClipboardWindowManager.shared.hideClipboardWindow()
         ClipboardPasteCoordinator.shared.pasteGroupIntoCapturedApplication(group)
     }

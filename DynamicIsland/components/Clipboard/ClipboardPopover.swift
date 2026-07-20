@@ -64,7 +64,7 @@ struct ClipboardPopover: View {
             guard let selectedGroupID,
                   let group = filteredGroups.first(where: { $0.id == selectedGroupID })
             else { return }
-            clipboardManager.activateGroup(group)
+            guard clipboardManager.activateGroup(group) else { return }
             dismiss()
             ClipboardPasteCoordinator.shared.pasteGroupIntoCapturedApplication(group)
             return
@@ -111,7 +111,7 @@ struct ClipboardPopover: View {
                                         onHover: { hoveredItemId = $0 },
                                         onSelect: { selectedGroupID = group.id },
                                         onActivate: {
-                                            clipboardManager.activateGroup(group)
+                                            guard clipboardManager.activateGroup(group) else { return }
                                             dismiss()
                                             ClipboardPasteCoordinator.shared.pasteGroupIntoCapturedApplication(group)
                                         }
