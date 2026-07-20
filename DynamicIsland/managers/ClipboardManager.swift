@@ -343,48 +343,35 @@ class ClipboardManager: ObservableObject {
         timer = nil
     }
     
-    func copyToClipboard(_ item: ClipboardItem) {
+    @discardableResult
+    func copyToClipboard(_ item: ClipboardItem) -> Bool {
+        // Resolve file-backed images and rich text before touching the system
+        // pasteboard. A missing payload must not clear the user's latest copy.
+        let preparedItems = pasteboardItems(for: [item])
+        guard !preparedItems.isEmpty else { return false }
+
+        // The monitor polls every 0.5 seconds. A user can copy something in
+        // another app and activate a history item before the next poll. Capture
+        // that pending external value before replacing the system pasteboard,
+        // otherwise advancing lastChangeCount below would lose it forever.
+        captureCurrentClipboardChangeIfNeeded(protecting: [item.id])
+
         let pasteboard = NSPasteboard.general
         pasteboard.clearContents()
-        
-        switch item.type {
-        case .text, .url:
-            if let stringData = item.stringData {
-                pasteboard.setString(stringData, forType: .string)
-            }
-        case .image:
-            if let imageData = item.getImageData() {
-                pasteboard.setData(imageData, forType: item.imagePasteboardType)
-            }
-        case .file:
-            if let fileURLs = item.fileURLs {
-                let urls = fileURLs.compactMap { URL(string: $0) }
-                pasteboard.writeObjects(urls as [NSPasteboardWriting])
-            }
-        case .rtf:
-            if let rtfData = item.getRTFData() {
-                pasteboard.setData(rtfData, forType: .rtf)
-            }
-            // Also set plain text as fallback
-            if let stringData = item.stringData {
-                pasteboard.setString(stringData, forType: .string)
-            }
-        case .unknown:
-            if let stringData = item.stringData {
-                pasteboard.setString(stringData, forType: .string)
-            }
-        }
+        let didWrite = pasteboard.writeObjects(preparedItems)
 
         // This is an intentional write from the history UI. Consume its
         // change count so the monitor does not create a duplicate entry.
         lastChangeCount = pasteboard.changeCount
+        guard didWrite else { return false }
+
         lastCopiedItemDate = Date()
+        return true
     }
 
-    func copyGroupToClipboard(_ group: ClipboardGroup) {
-        let pasteboard = NSPasteboard.general
-        pasteboard.clearContents()
-
+    @discardableResult
+    func copyGroupToClipboard(_ group: ClipboardGroup) -> Bool {
+        let preparedItems: [NSPasteboardItem]
         let textCompatibleItems = group.items.filter {
             [.text, .url, .rtf, .unknown].contains($0.type) && $0.stringData != nil
         }
@@ -392,18 +379,30 @@ class ClipboardManager: ObservableObject {
         // Text destinations usually consume only the first pasteboard item.
         // A single newline-delimited representation guarantees that every
         // selected text value is pasted, in the same order it had in the list.
-        if textCompatibleItems.count == group.items.count {
-            writeCombinedTextItems(textCompatibleItems, to: pasteboard)
+        if textCompatibleItems.count == group.items.count,
+           let combinedItem = combinedTextPasteboardItem(for: textCompatibleItems) {
+            preparedItems = [combinedItem]
         } else {
-            pasteboard.writeObjects(pasteboardItems(for: group.items))
+            preparedItems = pasteboardItems(for: group.items)
         }
+        guard !preparedItems.isEmpty else { return false }
 
+        // Group activation is also an intentional pasteboard write, so it must
+        // preserve any external copy that arrived between monitor ticks.
+        captureCurrentClipboardChangeIfNeeded()
+
+        let pasteboard = NSPasteboard.general
+        pasteboard.clearContents()
+        let didWrite = pasteboard.writeObjects(preparedItems)
         lastChangeCount = pasteboard.changeCount
+        guard didWrite else { return false }
+
         lastCopiedItemDate = Date()
+        return true
     }
 
     func activateItem(_ item: ClipboardItem) {
-        copyToClipboard(item)
+        guard copyToClipboard(item) else { return }
 
         if let index = pinnedItems.firstIndex(where: { $0.id == item.id }) {
             let promotedItem = pinnedItems.remove(at: index)
@@ -429,7 +428,7 @@ class ClipboardManager: ObservableObject {
     }
 
     func activateGroup(_ group: ClipboardGroup) {
-        copyGroupToClipboard(group)
+        guard copyGroupToClipboard(group) else { return }
         if let index = groups.firstIndex(where: { $0.id == group.id }) {
             let promotedGroup = groups.remove(at: index)
             groups.insert(promotedGroup, at: 0)
@@ -528,14 +527,18 @@ class ClipboardManager: ObservableObject {
         saveArchive()
     }
 
-    private func writeCombinedTextItems(
-        _ items: [ClipboardItem],
-        to pasteboard: NSPasteboard
-    ) {
+    private func combinedTextPasteboardItem(
+        for items: [ClipboardItem]
+    ) -> NSPasteboardItem? {
         let combinedText = items.compactMap(\.stringData).joined(separator: "\n")
-        pasteboard.setString(combinedText, forType: .string)
+        guard !combinedText.isEmpty else { return nil }
 
-        guard items.contains(where: { $0.type == .rtf }) else { return }
+        let pasteboardItem = NSPasteboardItem()
+        pasteboardItem.setString(combinedText, forType: .string)
+
+        guard items.contains(where: { $0.type == .rtf }) else {
+            return pasteboardItem
+        }
 
         let combinedAttributedString = NSMutableAttributedString(string: "")
         for (index, item) in items.enumerated() {
@@ -563,8 +566,9 @@ class ClipboardManager: ObservableObject {
             from: fullRange,
             documentAttributes: documentAttributes
         ) {
-            pasteboard.setData(rtfData, forType: .rtf)
+            pasteboardItem.setData(rtfData, forType: .rtf)
         }
+        return pasteboardItem
     }
 
     private func pasteboardItems(for items: [ClipboardItem]) -> [NSPasteboardItem] {
@@ -612,17 +616,25 @@ class ClipboardManager: ObservableObject {
         if Date().timeIntervalSince(lastMaintenanceDate) >= 86_400 {
             performDatabaseMaintenance()
         }
+        captureCurrentClipboardChangeIfNeeded()
+    }
+
+    @discardableResult
+    private func captureCurrentClipboardChangeIfNeeded(
+        protecting protectedItemIDs: Set<UUID> = []
+    ) -> Bool {
         let currentChangeCount = NSPasteboard.general.changeCount
-        
-        guard currentChangeCount != lastChangeCount else { return }
+
+        guard currentChangeCount != lastChangeCount else { return false }
         lastChangeCount = currentChangeCount
-        
-        guard let clipboardItem = getCurrentClipboardItem() else { return }
+
+        guard let clipboardItem = getCurrentClipboardItem() else { return false }
 
         // Re-copying an existing item should promote it to the top. addToHistory
         // removes the older matching entry and its payload before inserting this
         // freshly captured item, so duplicate images do not leak orphaned files.
-        addToHistory(clipboardItem)
+        addToHistory(clipboardItem, protecting: protectedItemIDs)
+        return true
     }
     
     private func getCurrentClipboardItem() -> ClipboardItem? {
@@ -746,29 +758,30 @@ class ClipboardManager: ObservableObject {
         return ClipboardItem(imageData: pngData, fileExtension: "png")
     }
     
-    private func addToHistory(_ item: ClipboardItem) {
-        DispatchQueue.main.async { [weak self] in
-            guard let self = self else { return }
-            
-            // Remove any existing items with the same data
-            let itemsToRemove = self.clipboardHistory.filter { existingItem in
-                return self.isSameContent(existingItem, item)
-            }
-
-            // Remove records by their already resolved IDs before deleting
-            // payloads. Once an image file is deleted, data-based comparison can
-            // no longer identify its history record.
-            let itemIDsToRemove = Set(itemsToRemove.map(\.id))
-            self.clipboardHistory.removeAll { itemIDsToRemove.contains($0.id) }
-
-            // Add to beginning of array
-            self.clipboardHistory.insert(item, at: 0)
-            self.lastCopiedItemDate = item.timestamp
-            
-            self.trimHistoryToLimit()
-            self.cleanupOldFiles()
-            self.saveArchive()
+    private func addToHistory(
+        _ item: ClipboardItem,
+        protecting protectedItemIDs: Set<UUID> = []
+    ) {
+        // Remove any existing items with the same data
+        let itemsToRemove = clipboardHistory.filter { existingItem in
+            return isSameContent(existingItem, item)
         }
+
+        // Remove records by their already resolved IDs before deleting
+        // payloads. Once an image file is deleted, data-based comparison can
+        // no longer identify its history record.
+        let itemIDsToRemove = Set(itemsToRemove.map(\.id))
+        clipboardHistory.removeAll { itemIDsToRemove.contains($0.id) }
+
+        // Clipboard observation and intentional writes both run on the main
+        // thread. Updating synchronously preserves their exact order; queuing
+        // this work allowed a later activation to overtake a captured copy.
+        clipboardHistory.insert(item, at: 0)
+        lastCopiedItemDate = item.timestamp
+
+        trimHistoryToLimit(protecting: protectedItemIDs)
+        cleanupOldFiles()
+        saveArchive()
     }
     
     // Helper to compare clipboard items for duplicates
@@ -811,9 +824,19 @@ class ClipboardManager: ObservableObject {
         }
     }
 
-    private func trimHistoryToLimit() {
+    private func trimHistoryToLimit(
+        protecting protectedItemIDs: Set<UUID> = []
+    ) {
         let limit = max(1, maxHistoryItems)
-        clipboardHistory = Array(clipboardHistory.prefix(limit))
+        while clipboardHistory.count > limit {
+            guard let removalIndex = clipboardHistory.lastIndex(where: {
+                !protectedItemIDs.contains($0.id)
+            }) else {
+                clipboardHistory = Array(clipboardHistory.prefix(limit))
+                return
+            }
+            clipboardHistory.remove(at: removalIndex)
+        }
     }
 
     private func removeExpiredItems() {
