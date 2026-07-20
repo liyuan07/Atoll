@@ -24,9 +24,14 @@ struct ClipboardWindow: View {
     @State private var selectedTab: ClipboardTab = .all
     @State private var searchText = ""
     @State private var selectedItemID: UUID?
+    @State private var selectedGroupID: UUID?
 
     private var filteredItems: [ClipboardItem] {
         fuzzyMatchedClipboardItems(query: searchText, items: selectedTab.items(from: clipboardManager))
+    }
+
+    private var filteredGroups: [ClipboardGroup] {
+        fuzzyMatchedClipboardGroups(query: searchText, groups: clipboardManager.groups)
     }
 
     private func moveSelection(_ direction: MoveCommandDirection) {
@@ -34,13 +39,33 @@ struct ClipboardWindow: View {
         case .left, .right:
             selectedTab = movedClipboardTab(from: selectedTab, direction: direction)
         case .up, .down:
-            selectedItemID = movedClipboardSelection(from: selectedItemID, direction: direction, items: filteredItems)
+            if selectedTab == .groups {
+                selectedGroupID = movedClipboardGroupSelection(
+                    from: selectedGroupID,
+                    direction: direction,
+                    groups: filteredGroups
+                )
+            } else {
+                selectedItemID = movedClipboardSelection(
+                    from: selectedItemID,
+                    direction: direction,
+                    items: filteredItems
+                )
+            }
         default:
             break
         }
     }
 
     private func activateSelection() {
+        if selectedTab == .groups {
+            guard let selectedGroupID,
+                  let group = filteredGroups.first(where: { $0.id == selectedGroupID })
+            else { return }
+            activate(group)
+            return
+        }
+
         guard let selectedItemID,
               let item = filteredItems.first(where: { $0.id == selectedItemID })
         else { return }
@@ -50,6 +75,13 @@ struct ClipboardWindow: View {
     private func activate(_ item: ClipboardItem) {
         selectedItemID = item.id
         clipboardManager.activateItem(item)
+        ClipboardWindowManager.shared.hideClipboardWindow()
+        ClipboardPasteCoordinator.shared.pasteIntoCapturedApplication()
+    }
+
+    private func activate(_ group: ClipboardGroup) {
+        selectedGroupID = group.id
+        clipboardManager.activateGroup(group)
         ClipboardWindowManager.shared.hideClipboardWindow()
         ClipboardPasteCoordinator.shared.pasteIntoCapturedApplication()
     }
@@ -73,7 +105,9 @@ struct ClipboardWindow: View {
                 selectedTab: $selectedTab,
                 searchText: searchText,
                 selectedItemID: $selectedItemID,
-                onActivate: activate
+                selectedGroupID: $selectedGroupID,
+                onActivate: activate,
+                onActivateGroup: activate
             )
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -82,6 +116,7 @@ struct ClipboardWindow: View {
         .shadow(color: .black.opacity(0.4), radius: 20, x: 0, y: 10)
         .onAppear {
             selectedItemID = filteredItems.first?.id
+            selectedGroupID = filteredGroups.first?.id
         }
     }
 }
@@ -117,7 +152,7 @@ struct ClipboardWindowHeader: View {
                         .font(.system(size: 12))
                 }
                 .buttonStyle(PlainButtonStyle())
-                .disabled(selectedTab.items(from: clipboardManager).isEmpty)
+                .disabled(selectedTab.isEmpty(in: clipboardManager))
             }
             .padding(.horizontal, 16)
             .padding(.vertical, 12)
@@ -175,16 +210,49 @@ struct ClipboardWindowContent: View {
     @Binding var selectedTab: ClipboardTab
     let searchText: String
     @Binding var selectedItemID: UUID?
+    @Binding var selectedGroupID: UUID?
     let onActivate: (ClipboardItem) -> Void
+    let onActivateGroup: (ClipboardGroup) -> Void
     @ObservedObject var clipboardManager = ClipboardManager.shared
     
     var filteredItems: [ClipboardItem] {
         fuzzyMatchedClipboardItems(query: searchText, items: selectedTab.items(from: clipboardManager))
     }
+
+    var filteredGroups: [ClipboardGroup] {
+        fuzzyMatchedClipboardGroups(query: searchText, groups: clipboardManager.groups)
+    }
     
     var body: some View {
         Group {
-            if filteredItems.isEmpty {
+            if selectedTab == .groups {
+                if filteredGroups.isEmpty {
+                    ClipboardEmptyState(tab: selectedTab, hasSearch: !searchText.isEmpty)
+                } else {
+                    ScrollViewReader { proxy in
+                        ScrollView {
+                            LazyVStack(spacing: 1) {
+                                ForEach(filteredGroups) { group in
+                                    ClipboardPanelGroupRow(
+                                        group: group,
+                                        isHovered: false,
+                                        isSelected: selectedGroupID == group.id,
+                                        onHover: { _ in },
+                                        onSelect: { selectedGroupID = group.id },
+                                        onActivate: { onActivateGroup(group) }
+                                    )
+                                    .id(group.id)
+                                }
+                            }
+                            .padding(.vertical, 8)
+                        }
+                        .onChange(of: selectedGroupID) { _, groupID in
+                            guard let groupID else { return }
+                            proxy.scrollTo(groupID, anchor: .center)
+                        }
+                    }
+                }
+            } else if filteredItems.isEmpty {
                 ClipboardEmptyState(tab: selectedTab, hasSearch: !searchText.isEmpty)
             } else {
                 ScrollViewReader { proxy in
@@ -210,8 +278,14 @@ struct ClipboardWindowContent: View {
                 }
             }
         }
-        .onChange(of: selectedTab) { _, _ in selectedItemID = filteredItems.first?.id }
-        .onChange(of: searchText) { _, _ in selectedItemID = filteredItems.first?.id }
+        .onChange(of: selectedTab) { _, tab in
+            selectedItemID = tab == .groups ? nil : filteredItems.first?.id
+            selectedGroupID = tab == .groups ? filteredGroups.first?.id : nil
+        }
+        .onChange(of: searchText) { _, _ in
+            selectedItemID = selectedTab == .groups ? nil : filteredItems.first?.id
+            selectedGroupID = selectedTab == .groups ? filteredGroups.first?.id : nil
+        }
     }
 }
 
@@ -238,7 +312,7 @@ struct ClipboardEmptyState: View {
                     .font(.system(size: 14, weight: .medium))
                     .foregroundColor(.primary)
                 
-                Text(tab == .favorites ? "将条目加入收藏后会显示在这里" : "复制内容后会显示在这里")
+                Text(emptyDescription)
                     .font(.system(size: 12))
                     .foregroundColor(.secondary)
                     .multilineTextAlignment(.center)
@@ -246,6 +320,17 @@ struct ClipboardEmptyState: View {
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
+
+    private var emptyDescription: String {
+        switch tab {
+        case .favorites:
+            return "将条目加入收藏后会显示在这里"
+        case .groups:
+            return "按住 ⌘ 选择多个条目，再按 Enter 保存为分组"
+        default:
+            return "复制内容后会显示在这里"
+        }
     }
 }
 
@@ -268,7 +353,7 @@ struct ClipboardWindowItemRow: View {
 
             // Content
             VStack(alignment: .leading, spacing: 4) {
-                Text(item.preview)
+                Text(item.displayPreview)
                     .font(.system(size: 12))
                     .foregroundColor(.primary)
                     .lineLimit(2)

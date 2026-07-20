@@ -130,7 +130,7 @@ struct ClipboardItemRow: View {
             
             // Content
             VStack(alignment: .leading, spacing: 2) {
-                Text(item.preview)
+                Text(item.displayPreview)
                     .font(.system(size: 11))
                     .foregroundColor(.white)
                     .lineLimit(2)

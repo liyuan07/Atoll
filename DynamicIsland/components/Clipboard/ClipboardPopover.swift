@@ -26,9 +26,14 @@ struct ClipboardPopover: View {
     @State private var searchText = ""
     @State private var hoveredItemId: UUID?
     @State private var selectedItemID: UUID?
+    @State private var selectedGroupID: UUID?
     
     var filteredItems: [ClipboardItem] {
         fuzzyMatchedClipboardItems(query: searchText, items: selectedTab.items(from: clipboardManager))
+    }
+
+    var filteredGroups: [ClipboardGroup] {
+        fuzzyMatchedClipboardGroups(query: searchText, groups: clipboardManager.groups)
     }
 
     private func moveSelection(_ direction: MoveCommandDirection) {
@@ -36,13 +41,35 @@ struct ClipboardPopover: View {
         case .left, .right:
             selectedTab = movedClipboardTab(from: selectedTab, direction: direction)
         case .up, .down:
-            selectedItemID = movedClipboardSelection(from: selectedItemID, direction: direction, items: filteredItems)
+            if selectedTab == .groups {
+                selectedGroupID = movedClipboardGroupSelection(
+                    from: selectedGroupID,
+                    direction: direction,
+                    groups: filteredGroups
+                )
+            } else {
+                selectedItemID = movedClipboardSelection(
+                    from: selectedItemID,
+                    direction: direction,
+                    items: filteredItems
+                )
+            }
         default:
             break
         }
     }
 
     private func activateSelection() {
+        if selectedTab == .groups {
+            guard let selectedGroupID,
+                  let group = filteredGroups.first(where: { $0.id == selectedGroupID })
+            else { return }
+            clipboardManager.activateGroup(group)
+            dismiss()
+            ClipboardPasteCoordinator.shared.pasteIntoCapturedApplication()
+            return
+        }
+
         guard let selectedItemID,
               let item = filteredItems.first(where: { $0.id == selectedItemID })
         else { return }
@@ -66,7 +93,41 @@ struct ClipboardPopover: View {
                 .background(Color.gray.opacity(0.3))
             
             // Content
-            if filteredItems.isEmpty {
+            if selectedTab == .groups {
+                if filteredGroups.isEmpty {
+                    ClipboardPopoverEmptyState(
+                        hasSearch: !searchText.isEmpty,
+                        selectedTab: selectedTab
+                    )
+                } else {
+                    ScrollViewReader { proxy in
+                        ScrollView {
+                            LazyVStack(spacing: 1) {
+                                ForEach(filteredGroups) { group in
+                                    ClipboardPanelGroupRow(
+                                        group: group,
+                                        isHovered: hoveredItemId == group.id,
+                                        isSelected: selectedGroupID == group.id,
+                                        onHover: { hoveredItemId = $0 },
+                                        onSelect: { selectedGroupID = group.id },
+                                        onActivate: {
+                                            clipboardManager.activateGroup(group)
+                                            dismiss()
+                                            ClipboardPasteCoordinator.shared.pasteIntoCapturedApplication()
+                                        }
+                                    )
+                                    .id(group.id)
+                                }
+                            }
+                            .padding(.vertical, 8)
+                        }
+                        .onChange(of: selectedGroupID) { _, groupID in
+                            guard let groupID else { return }
+                            proxy.scrollTo(groupID, anchor: .center)
+                        }
+                    }
+                }
+            } else if filteredItems.isEmpty {
                 ClipboardPopoverEmptyState(
                     hasSearch: !searchText.isEmpty,
                     selectedTab: selectedTab
@@ -104,9 +165,16 @@ struct ClipboardPopover: View {
         )
         .onAppear {
             selectedItemID = filteredItems.first?.id
+            selectedGroupID = filteredGroups.first?.id
         }
-        .onChange(of: selectedTab) { _, _ in selectedItemID = filteredItems.first?.id }
-        .onChange(of: searchText) { _, _ in selectedItemID = filteredItems.first?.id }
+        .onChange(of: selectedTab) { _, tab in
+            selectedItemID = tab == .groups ? nil : filteredItems.first?.id
+            selectedGroupID = tab == .groups ? filteredGroups.first?.id : nil
+        }
+        .onChange(of: searchText) { _, _ in
+            selectedItemID = selectedTab == .groups ? nil : filteredItems.first?.id
+            selectedGroupID = selectedTab == .groups ? filteredGroups.first?.id : nil
+        }
     }
 }
 
@@ -141,7 +209,7 @@ struct ClipboardPopoverHeader: View {
                         .font(.system(size: 11))
                 }
                 .buttonStyle(PlainButtonStyle())
-                .disabled(selectedTab.items(from: clipboardManager).isEmpty)
+                .disabled(selectedTab.isEmpty(in: clipboardManager))
             }
             .padding(.horizontal, 14)
             .padding(.top, 10)
@@ -219,13 +287,24 @@ struct ClipboardPopoverEmptyState: View {
                     .font(.system(size: 12, weight: .medium))
                     .foregroundColor(.primary)
                 
-                Text(selectedTab == .favorites ? "将条目加入收藏后会显示在这里" : "复制内容后会显示在这里")
+                Text(emptyDescription)
                     .font(.system(size: 10))
                     .foregroundColor(.secondary)
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .padding(20)
+    }
+
+    private var emptyDescription: String {
+        switch selectedTab {
+        case .favorites:
+            return "将条目加入收藏后会显示在这里"
+        case .groups:
+            return "按住 ⌘ 选择多个条目，再按 Enter 保存为分组"
+        default:
+            return "复制内容后会显示在这里"
+        }
     }
 }
 
@@ -247,7 +326,7 @@ struct ClipboardPopoverItemRow: View {
             
             // Content
             VStack(alignment: .leading, spacing: 3) {
-                Text(item.preview)
+                Text(item.displayPreview)
                     .font(.system(size: 11))
                     .foregroundColor(.primary)
                     .lineLimit(2)

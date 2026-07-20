@@ -61,6 +61,45 @@ struct ClipboardItemLeadingPreview: View {
     }
 }
 
+struct ClipboardGroupLeadingPreview: View {
+    let group: ClipboardGroup
+
+    var body: some View {
+        ZStack(alignment: .bottomTrailing) {
+            ZStack {
+                ForEach(Array(group.items.prefix(3).enumerated()), id: \.element.id) { index, item in
+                    RoundedRectangle(cornerRadius: 7, style: .continuous)
+                        .fill(Color(nsColor: .controlBackgroundColor))
+                        .overlay {
+                            Image(systemName: item.type.icon)
+                                .font(.system(size: 13, weight: .medium))
+                                .foregroundColor(.blue)
+                        }
+                        .overlay {
+                            RoundedRectangle(cornerRadius: 7, style: .continuous)
+                                .stroke(Color.primary.opacity(0.12), lineWidth: 1)
+                        }
+                        .frame(width: 48, height: 38)
+                        .offset(
+                            x: CGFloat(index) * 7 - 7,
+                            y: CGFloat(index) * -4 + 4
+                        )
+                }
+            }
+            .frame(width: 72, height: 52)
+
+            Text("\(group.items.count)")
+                .font(.system(size: 9, weight: .bold))
+                .foregroundColor(.white)
+                .padding(.horizontal, 5)
+                .padding(.vertical, 2)
+                .background(Capsule().fill(Color.accentColor))
+                .offset(x: -1, y: -1)
+        }
+        .frame(width: 72, height: 52)
+    }
+}
+
 private final class ClipboardImageThumbnailCache {
     static let shared = ClipboardImageThumbnailCache()
 
@@ -114,11 +153,33 @@ func fuzzyMatchedClipboardItems(
     guard !normalizedQuery.isEmpty else { return items }
 
     return items.compactMap { item -> (ClipboardItem, Int)? in
-        let searchableText = normalizedClipboardSearchText("\(item.preview) \(item.type.displayName)")
+        let searchableText = normalizedClipboardSearchText("\(item.displayPreview) \(item.type.displayName)")
         guard let score = clipboardFuzzyScore(query: normalizedQuery, candidate: searchableText) else {
             return nil
         }
         return (item, score)
+    }
+    .sorted { lhs, rhs in
+        lhs.1 == rhs.1 ? lhs.0.timestamp > rhs.0.timestamp : lhs.1 > rhs.1
+    }
+    .map(\.0)
+}
+
+func fuzzyMatchedClipboardGroups(
+    query: String,
+    groups: [ClipboardGroup]
+) -> [ClipboardGroup] {
+    let normalizedQuery = normalizedClipboardSearchText(query)
+    guard !normalizedQuery.isEmpty else { return groups }
+
+    return groups.compactMap { group -> (ClipboardGroup, Int)? in
+        let searchableText = normalizedClipboardSearchText(
+            "\(group.title) \(group.preview)"
+        )
+        guard let score = clipboardFuzzyScore(query: normalizedQuery, candidate: searchableText) else {
+            return nil
+        }
+        return (group, score)
     }
     .sorted { lhs, rhs in
         lhs.1 == rhs.1 ? lhs.0.timestamp > rhs.0.timestamp : lhs.1 > rhs.1
@@ -282,6 +343,26 @@ func movedClipboardSelection(
     }
 }
 
+func movedClipboardGroupSelection(
+    from currentID: UUID?,
+    direction: MoveCommandDirection,
+    groups: [ClipboardGroup]
+) -> UUID? {
+    guard !groups.isEmpty else { return nil }
+    guard let currentID, let currentIndex = groups.firstIndex(where: { $0.id == currentID }) else {
+        return direction == .up ? groups.last?.id : groups.first?.id
+    }
+
+    switch direction {
+    case .up:
+        return groups[max(0, currentIndex - 1)].id
+    case .down:
+        return groups[min(groups.count - 1, currentIndex + 1)].id
+    default:
+        return currentID
+    }
+}
+
 func movedClipboardTab(from currentTab: ClipboardTab, direction: MoveCommandDirection) -> ClipboardTab {
     let tabs = ClipboardTab.allCases
     guard let currentIndex = tabs.firstIndex(of: currentTab) else { return .all }
@@ -302,6 +383,7 @@ enum ClipboardTab: String, CaseIterable {
     case images = "Images"
     case files = "Files"
     case favorites = "Favorites"
+    case groups = "Groups"
     
     var icon: String {
         switch self {
@@ -310,6 +392,7 @@ enum ClipboardTab: String, CaseIterable {
         case .images: return "photo"
         case .files: return "doc"
         case .favorites: return "heart.fill"
+        case .groups: return "square.stack.3d.up.fill"
         }
     }
     
@@ -320,6 +403,7 @@ enum ClipboardTab: String, CaseIterable {
         case .images: return "图片"
         case .files: return "文件"
         case .favorites: return "收藏"
+        case .groups: return "分组"
         }
     }
 
@@ -335,6 +419,8 @@ enum ClipboardTab: String, CaseIterable {
             return !item.isPinned && item.type == .file
         case .favorites:
             return item.isPinned
+        case .groups:
+            return false
         }
     }
 
@@ -342,7 +428,14 @@ enum ClipboardTab: String, CaseIterable {
         if self == .favorites {
             return manager.pinnedItems
         }
+        if self == .groups {
+            return []
+        }
         return manager.regularHistory.filter { includes($0) }
+    }
+
+    func isEmpty(in manager: ClipboardManager) -> Bool {
+        self == .groups ? manager.groups.isEmpty : items(from: manager).isEmpty
     }
 }
 

@@ -251,9 +251,15 @@ struct ClipboardPanelView: View {
     @State private var searchText = ""
     @State private var hoveredItemId: UUID?
     @State private var selectedItemID: UUID?
+    @State private var selectedItemIDs = Set<UUID>()
+    @State private var selectedGroupID: UUID?
     
     var filteredItems: [ClipboardItem] {
         fuzzyMatchedClipboardItems(query: searchText, items: selectedTab.items(from: clipboardManager))
+    }
+
+    var filteredGroups: [ClipboardGroup] {
+        fuzzyMatchedClipboardGroups(query: searchText, groups: clipboardManager.groups)
     }
 
     private func moveSelection(_ direction: MoveCommandDirection) {
@@ -261,16 +267,48 @@ struct ClipboardPanelView: View {
         case .left, .right:
             selectedTab = movedClipboardTab(from: selectedTab, direction: direction)
         case .up, .down:
-            selectedItemID = movedClipboardSelection(from: selectedItemID, direction: direction, items: filteredItems)
+            if selectedTab == .groups {
+                selectedGroupID = movedClipboardGroupSelection(
+                    from: selectedGroupID,
+                    direction: direction,
+                    groups: filteredGroups
+                )
+            } else {
+                selectedItemID = movedClipboardSelection(
+                    from: selectedItemID,
+                    direction: direction,
+                    items: filteredItems
+                )
+                selectedItemIDs = selectedItemID.map { [$0] } ?? []
+            }
         default:
             break
         }
     }
 
     private func activateSelection() {
-        guard let selectedItemID,
-              let item = filteredItems.first(where: { $0.id == selectedItemID })
-        else { return }
+        if selectedTab == .groups {
+            guard let selectedGroupID,
+                  let group = filteredGroups.first(where: { $0.id == selectedGroupID })
+            else { return }
+            activate(group)
+            return
+        }
+
+        let selectedItems = filteredItems.filter { selectedItemIDs.contains($0.id) }
+        if selectedItems.count > 1 {
+            guard let group = clipboardManager.createGroup(from: selectedItems) else { return }
+            selectedItemIDs.removeAll()
+            selectedItemID = nil
+            selectedTab = .groups
+            selectedGroupID = group.id
+            searchText = ""
+            return
+        }
+
+        let item = selectedItems.first
+            ?? selectedItemID.flatMap { id in filteredItems.first(where: { $0.id == id }) }
+        guard let item else { return }
         activate(item)
     }
 
@@ -279,6 +317,43 @@ struct ClipboardPanelView: View {
         clipboardManager.activateItem(item)
         onClose()
         ClipboardPasteCoordinator.shared.pasteIntoCapturedApplication()
+    }
+
+    private func activate(_ group: ClipboardGroup) {
+        selectedGroupID = group.id
+        clipboardManager.activateGroup(group)
+        onClose()
+        ClipboardPasteCoordinator.shared.pasteIntoCapturedApplication()
+    }
+
+    private func select(_ item: ClipboardItem, extendingSelection: Bool) {
+        if extendingSelection {
+            if selectedItemIDs.contains(item.id) {
+                selectedItemIDs.remove(item.id)
+                selectedItemID = filteredItems.first(where: {
+                    selectedItemIDs.contains($0.id)
+                })?.id
+            } else {
+                selectedItemIDs.insert(item.id)
+                selectedItemID = item.id
+            }
+        } else {
+            selectedItemID = item.id
+            selectedItemIDs = [item.id]
+        }
+    }
+
+    private func resetSelection() {
+        selectedItemIDs.removeAll()
+        selectedItemID = nil
+        selectedGroupID = nil
+
+        if selectedTab == .groups {
+            selectedGroupID = filteredGroups.first?.id
+        } else if let firstID = filteredItems.first?.id {
+            selectedItemID = firstID
+            selectedItemIDs = [firstID]
+        }
     }
     
     var body: some View {
@@ -294,9 +369,61 @@ struct ClipboardPanelView: View {
             
             Divider()
                 .background(Color.gray.opacity(0.3))
+
+            if selectedTab != .groups, selectedItemIDs.count > 1 {
+                HStack(spacing: 8) {
+                    Image(systemName: "checkmark.circle.fill")
+                        .foregroundColor(.accentColor)
+                    Text("已选择 \(selectedItemIDs.count) 项")
+                        .font(.system(size: 11, weight: .semibold))
+                    Text("按 Enter 保存到分组")
+                        .font(.system(size: 11))
+                        .foregroundColor(.secondary)
+                    Spacer()
+                    Text("⌘ 点击可增减选择")
+                        .font(.system(size: 10))
+                        .foregroundColor(.secondary)
+                }
+                .padding(.horizontal, 16)
+                .padding(.vertical, 7)
+                .background(Color.accentColor.opacity(0.08))
+                .transition(.move(edge: .top).combined(with: .opacity))
+            }
             
             // Content
-            if filteredItems.isEmpty {
+            if selectedTab == .groups {
+                if filteredGroups.isEmpty {
+                    ClipboardPanelEmptyState(
+                        hasSearch: !searchText.isEmpty,
+                        selectedTab: selectedTab
+                    )
+                } else {
+                    ScrollViewReader { proxy in
+                        ScrollView {
+                            LazyVStack(spacing: 1) {
+                                ForEach(filteredGroups) { group in
+                                    ClipboardPanelGroupRow(
+                                        group: group,
+                                        isHovered: hoveredItemId == group.id,
+                                        isSelected: selectedGroupID == group.id,
+                                        onHover: { hoveredItemId = $0 },
+                                        onSelect: { selectedGroupID = group.id },
+                                        onActivate: { activate(group) }
+                                    )
+                                    .id(group.id)
+                                }
+                            }
+                            .padding(.vertical, 8)
+                        }
+                        .onChange(of: selectedGroupID) { _, groupID in
+                            guard let groupID else { return }
+                            withAnimation(.easeOut(duration: 0.12)) {
+                                proxy.scrollTo(groupID, anchor: .center)
+                            }
+                        }
+                    }
+                }
+            } else if filteredItems.isEmpty {
                 ClipboardPanelEmptyState(
                     hasSearch: !searchText.isEmpty,
                     selectedTab: selectedTab
@@ -309,10 +436,12 @@ struct ClipboardPanelView: View {
                                 ClipboardPanelItemRow(
                                     item: item,
                                     isHovered: hoveredItemId == item.id,
-                                    isSelected: selectedItemID == item.id,
+                                    isSelected: selectedItemIDs.contains(item.id),
                                     isPinned: clipboardManager.pinnedItems.contains(where: { $0.id == item.id }),
                                     onHover: { hoveredItemId = $0 },
-                                    onSelect: { selectedItemID = item.id },
+                                    onSelect: { extendingSelection in
+                                        select(item, extendingSelection: extendingSelection)
+                                    },
                                     onActivate: { activate(item) }
                                 )
                                 .id(item.id)
@@ -334,10 +463,14 @@ struct ClipboardPanelView: View {
         .cornerRadius(12)
         .shadow(color: .black.opacity(0.4), radius: 20, x: 0, y: 10)
         .onAppear {
-            selectedItemID = filteredItems.first?.id
+            resetSelection()
         }
-        .onChange(of: selectedTab) { _, _ in selectedItemID = filteredItems.first?.id }
-        .onChange(of: searchText) { _, _ in selectedItemID = filteredItems.first?.id }
+        .onChange(of: selectedTab) { _, _ in
+            resetSelection()
+        }
+        .onChange(of: searchText) { _, _ in
+            resetSelection()
+        }
         .onReceive(NotificationCenter.default.publisher(for: .clipboardPanelActivateSelection)) { _ in
             activateSelection()
         }
@@ -378,7 +511,7 @@ struct ClipboardPanelHeader: View {
                         .font(.system(size: 12))
                 }
                 .buttonStyle(PlainButtonStyle())
-                .disabled(selectedTab.items(from: clipboardManager).isEmpty)
+                .disabled(selectedTab.isEmpty(in: clipboardManager))
             }
             .padding(.horizontal, 16)
             .padding(.top, 12)
@@ -456,12 +589,23 @@ struct ClipboardPanelEmptyState: View {
                     .font(.system(size: 14, weight: .medium))
                     .foregroundColor(.primary)
                 
-                Text(selectedTab == .favorites ? "将条目加入收藏后会显示在这里" : "复制内容后会显示在这里")
+                Text(emptyDescription)
                     .font(.system(size: 12))
                     .foregroundColor(.secondary)
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
+
+    private var emptyDescription: String {
+        switch selectedTab {
+        case .favorites:
+            return "将条目加入收藏后会显示在这里"
+        case .groups:
+            return "按住 ⌘ 选择多个条目，再按 Enter 保存为分组"
+        default:
+            return "复制内容后会显示在这里"
+        }
     }
 }
 
@@ -471,7 +615,7 @@ struct ClipboardPanelItemRow: View {
     let isSelected: Bool
     let isPinned: Bool
     let onHover: (UUID?) -> Void
-    let onSelect: () -> Void
+    let onSelect: (Bool) -> Void
     let onActivate: () -> Void
     @ObservedObject var clipboardManager = ClipboardManager.shared
     @State private var justCopied = false
@@ -482,7 +626,7 @@ struct ClipboardPanelItemRow: View {
             
             // Content
             VStack(alignment: .leading, spacing: 4) {
-                Text(item.preview)
+                Text(item.displayPreview)
                     .font(.system(size: 12))
                     .foregroundColor(.primary)
                     .lineLimit(2)
@@ -572,7 +716,7 @@ struct ClipboardPanelItemRow: View {
             onActivate()
         }
         .onTapGesture(count: 1) {
-            onSelect()
+            onSelect(NSEvent.modifierFlags.contains(.command))
         }
     }
     
@@ -590,6 +734,128 @@ struct ClipboardPanelItemRow: View {
         } else {
             let days = Int(interval / 86400)
             return "\(days) 天前"
+        }
+    }
+}
+
+struct ClipboardPanelGroupRow: View {
+    let group: ClipboardGroup
+    let isHovered: Bool
+    let isSelected: Bool
+    let onHover: (UUID?) -> Void
+    let onSelect: () -> Void
+    let onActivate: () -> Void
+    @ObservedObject var clipboardManager = ClipboardManager.shared
+    @State private var justCopied = false
+
+    var body: some View {
+        HStack(alignment: .center, spacing: 12) {
+            ClipboardGroupLeadingPreview(group: group)
+
+            VStack(alignment: .leading, spacing: 5) {
+                HStack(spacing: 7) {
+                    Text(group.title)
+                        .font(.system(size: 12, weight: .semibold))
+                        .foregroundColor(.primary)
+
+                    Text("\(group.items.count) 项")
+                        .font(.system(size: 9, weight: .medium))
+                        .foregroundColor(.accentColor)
+                        .padding(.horizontal, 6)
+                        .padding(.vertical, 2)
+                        .background(
+                            Capsule()
+                                .fill(Color.accentColor.opacity(0.12))
+                        )
+                }
+
+                Text(group.preview)
+                    .font(.system(size: 10))
+                    .foregroundColor(.secondary)
+                    .lineLimit(2)
+
+                HStack {
+                    Label("整组粘贴", systemImage: "square.stack.3d.up")
+                        .font(.system(size: 9))
+                        .foregroundColor(.secondary)
+
+                    Spacer()
+
+                    Text(timeAgoString(from: group.timestamp))
+                        .font(.system(size: 10))
+                        .foregroundColor(.secondary)
+                }
+            }
+
+            Spacer()
+
+            if isHovered {
+                HStack(spacing: 8) {
+                    Button {
+                        clipboardManager.copyGroupToClipboard(group)
+                        withAnimation(.easeInOut(duration: 0.2)) {
+                            justCopied = true
+                        }
+                        DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) {
+                            withAnimation(.easeInOut(duration: 0.2)) {
+                                justCopied = false
+                            }
+                        }
+                    } label: {
+                        Image(systemName: justCopied ? "checkmark.circle.fill" : "doc.on.doc")
+                            .font(.system(size: 11))
+                            .foregroundColor(.green)
+                    }
+                    .buttonStyle(PlainButtonStyle())
+                    .help("复制整个分组")
+
+                    Button {
+                        clipboardManager.deleteGroup(group)
+                    } label: {
+                        Image(systemName: "trash")
+                            .font(.system(size: 11))
+                            .foregroundColor(.red)
+                    }
+                    .buttonStyle(PlainButtonStyle())
+                    .help("删除分组")
+                }
+            }
+        }
+        .padding(.horizontal, 16)
+        .padding(.vertical, 9)
+        .background(
+            RoundedRectangle(cornerRadius: 6)
+                .fill(
+                    isSelected
+                        ? Color.accentColor.opacity(0.22)
+                        : (isHovered ? Color.gray.opacity(0.1) : Color.clear)
+                )
+        )
+        .contentShape(Rectangle())
+        .onHover { hovering in
+            withAnimation(.easeInOut(duration: 0.2)) {
+                onHover(hovering ? group.id : nil)
+            }
+        }
+        .onTapGesture(count: 2) {
+            onActivate()
+        }
+        .onTapGesture(count: 1) {
+            onSelect()
+        }
+    }
+
+    private func timeAgoString(from date: Date) -> String {
+        let interval = Date().timeIntervalSince(date)
+
+        if interval < 60 {
+            return "刚刚"
+        } else if interval < 3600 {
+            return "\(Int(interval / 60)) 分钟前"
+        } else if interval < 86400 {
+            return "\(Int(interval / 3600)) 小时前"
+        } else {
+            return "\(Int(interval / 86400)) 天前"
         }
     }
 }

@@ -132,6 +132,12 @@ struct ClipboardItem: Identifiable, Codable {
         }
         return rtfData
     }
+
+    /// Uses the original string for links, including records archived before
+    /// link previews were fixed.
+    var displayPreview: String {
+        type == .url ? (stringData ?? preview) : preview
+    }
     
     // Helper to check if this item has the same content as another
     func isSameContent(as other: ClipboardItem) -> Bool {
@@ -146,10 +152,10 @@ struct ClipboardItem: Identifiable, Codable {
         case .text:
             return String(stringData.prefix(50))
         case .url:
-            if let url = URL(string: stringData) {
-                return url.lastPathComponent.isEmpty ? url.host ?? stringData : url.lastPathComponent
-            }
-            return String(stringData.prefix(50))
+            // A URL's lastPathComponent can be "/" or an unrelated file name,
+            // which made link entries look as if most of their content was
+            // missing. Keep the original URL for an accurate, useful preview.
+            return stringData
         case .file:
             if let url = URL(string: stringData) {
                 return url.lastPathComponent
@@ -196,9 +202,40 @@ enum ClipboardItemType: String, CaseIterable, Codable {
     }
 }
 
+struct ClipboardGroup: Identifiable, Codable {
+    let id: UUID
+    let timestamp: Date
+    var items: [ClipboardItem]
+
+    init(id: UUID = UUID(), timestamp: Date = Date(), items: [ClipboardItem]) {
+        self.id = id
+        self.timestamp = timestamp
+        self.items = items
+    }
+
+    var title: String {
+        let counts = Dictionary(grouping: items, by: \.type)
+        let orderedTypes: [ClipboardItemType] = [.text, .url, .rtf, .image, .file, .unknown]
+        let parts = orderedTypes.compactMap { type -> String? in
+            guard let count = counts[type]?.count, count > 0 else { return nil }
+            return "\(type.displayName) \(count)"
+        }
+        return parts.joined(separator: " · ")
+    }
+
+    var preview: String {
+        items
+            .prefix(3)
+            .map(\.displayPreview)
+            .joined(separator: "  ·  ")
+    }
+}
+
 private struct ClipboardArchive: Codable {
     var history: [ClipboardItem]
     var pinnedItems: [ClipboardItem]
+    // Optional so archives written by older Atoll versions continue to decode.
+    var groups: [ClipboardGroup]?
 }
 
 class ClipboardManager: ObservableObject {
@@ -206,6 +243,7 @@ class ClipboardManager: ObservableObject {
     
     @Published var clipboardHistory: [ClipboardItem] = []
     @Published var pinnedItems: [ClipboardItem] = []
+    @Published var groups: [ClipboardGroup] = []
     @Published var isMonitoring: Bool = false
     @Published private(set) var lastCopiedItemDate: Date?
     
@@ -343,6 +381,27 @@ class ClipboardManager: ObservableObject {
         lastCopiedItemDate = Date()
     }
 
+    func copyGroupToClipboard(_ group: ClipboardGroup) {
+        let pasteboard = NSPasteboard.general
+        pasteboard.clearContents()
+
+        let textCompatibleItems = group.items.filter {
+            [.text, .url, .rtf, .unknown].contains($0.type) && $0.stringData != nil
+        }
+
+        // Text destinations usually consume only the first pasteboard item.
+        // A single newline-delimited representation guarantees that every
+        // selected text value is pasted, in the same order it had in the list.
+        if textCompatibleItems.count == group.items.count {
+            writeCombinedTextItems(textCompatibleItems, to: pasteboard)
+        } else {
+            pasteboard.writeObjects(pasteboardItems(for: group.items))
+        }
+
+        lastChangeCount = pasteboard.changeCount
+        lastCopiedItemDate = Date()
+    }
+
     func activateItem(_ item: ClipboardItem) {
         copyToClipboard(item)
 
@@ -356,20 +415,50 @@ class ClipboardManager: ObservableObject {
 
         saveArchive()
     }
+
+    @discardableResult
+    func createGroup(from items: [ClipboardItem]) -> ClipboardGroup? {
+        var seenIDs = Set<UUID>()
+        let uniqueItems = items.filter { seenIDs.insert($0.id).inserted }
+        guard uniqueItems.count > 1 else { return nil }
+
+        let group = ClipboardGroup(items: uniqueItems)
+        groups.insert(group, at: 0)
+        saveArchive()
+        return group
+    }
+
+    func activateGroup(_ group: ClipboardGroup) {
+        copyGroupToClipboard(group)
+        if let index = groups.firstIndex(where: { $0.id == group.id }) {
+            let promotedGroup = groups.remove(at: index)
+            groups.insert(promotedGroup, at: 0)
+        }
+        saveArchive()
+    }
+
+    func deleteGroup(_ group: ClipboardGroup) {
+        groups.removeAll { $0.id == group.id }
+        cleanupOldFiles()
+        saveArchive()
+    }
+
+    func clearGroups() {
+        groups.removeAll()
+        cleanupOldFiles()
+        saveArchive()
+    }
     
     func deleteItem(_ item: ClipboardItem) {
-        deletePayloadFiles(for: item)
         clipboardHistory.removeAll { $0.id == item.id }
         pinnedItems.removeAll { $0.id == item.id }
+        cleanupOldFiles()
         saveArchive()
     }
     
     func clearHistory() {
-        for item in clipboardHistory {
-            deletePayloadFiles(for: item)
-        }
-        
         clipboardHistory.removeAll()
+        cleanupOldFiles()
         saveArchive()
     }
     
@@ -413,10 +502,8 @@ class ClipboardManager: ObservableObject {
     }
 
     func clearPinnedItems() {
-        for item in pinnedItems {
-            deletePayloadFiles(for: item)
-        }
         pinnedItems.removeAll()
+        cleanupOldFiles()
         saveArchive()
     }
 
@@ -425,18 +512,98 @@ class ClipboardManager: ObservableObject {
     }
 
     func clearItems(in tab: ClipboardTab) {
+        if tab == .groups {
+            clearGroups()
+            return
+        }
         if tab == .favorites {
             clearPinnedItems()
             return
         }
 
         let itemsToRemove = clipboardHistory.filter { tab.includes($0) }
-        for item in itemsToRemove {
-            deletePayloadFiles(for: item)
-        }
         let removedIDs = Set(itemsToRemove.map(\.id))
         clipboardHistory.removeAll { removedIDs.contains($0.id) }
+        cleanupOldFiles()
         saveArchive()
+    }
+
+    private func writeCombinedTextItems(
+        _ items: [ClipboardItem],
+        to pasteboard: NSPasteboard
+    ) {
+        let combinedText = items.compactMap(\.stringData).joined(separator: "\n")
+        pasteboard.setString(combinedText, forType: .string)
+
+        guard items.contains(where: { $0.type == .rtf }) else { return }
+
+        let combinedAttributedString = NSMutableAttributedString(string: "")
+        for (index, item) in items.enumerated() {
+            if index > 0 {
+                combinedAttributedString.append(NSAttributedString(string: "\n"))
+            }
+
+            if item.type == .rtf,
+               let rtfData = item.getRTFData(),
+               let attributedString = NSAttributedString(
+                   rtf: rtfData,
+                   documentAttributes: nil
+               ) {
+                combinedAttributedString.append(attributedString)
+            } else if let stringData = item.stringData {
+                combinedAttributedString.append(NSAttributedString(string: stringData))
+            }
+        }
+
+        let fullRange = NSRange(location: 0, length: combinedAttributedString.length)
+        let documentAttributes: [NSAttributedString.DocumentAttributeKey: Any] = [
+            .documentType: NSAttributedString.DocumentType.rtf
+        ]
+        if let rtfData = try? combinedAttributedString.data(
+            from: fullRange,
+            documentAttributes: documentAttributes
+        ) {
+            pasteboard.setData(rtfData, forType: .rtf)
+        }
+    }
+
+    private func pasteboardItems(for items: [ClipboardItem]) -> [NSPasteboardItem] {
+        items.flatMap { item -> [NSPasteboardItem] in
+            switch item.type {
+            case .text, .unknown:
+                guard let stringData = item.stringData else { return [] }
+                let pasteboardItem = NSPasteboardItem()
+                pasteboardItem.setString(stringData, forType: .string)
+                return [pasteboardItem]
+            case .url:
+                guard let stringData = item.stringData else { return [] }
+                let pasteboardItem = NSPasteboardItem()
+                pasteboardItem.setString(stringData, forType: .string)
+                pasteboardItem.setString(stringData, forType: .URL)
+                return [pasteboardItem]
+            case .image:
+                guard let imageData = item.getImageData() else { return [] }
+                let pasteboardItem = NSPasteboardItem()
+                pasteboardItem.setData(imageData, forType: item.imagePasteboardType)
+                return [pasteboardItem]
+            case .file:
+                return (item.fileURLs ?? []).compactMap { urlString in
+                    guard let url = URL(string: urlString) else { return nil }
+                    let pasteboardItem = NSPasteboardItem()
+                    pasteboardItem.setString(url.absoluteString, forType: .fileURL)
+                    return pasteboardItem
+                }
+            case .rtf:
+                let pasteboardItem = NSPasteboardItem()
+                if let rtfData = item.getRTFData() {
+                    pasteboardItem.setData(rtfData, forType: .rtf)
+                }
+                if let stringData = item.stringData {
+                    pasteboardItem.setString(stringData, forType: .string)
+                }
+                return pasteboardItem.types.isEmpty ? [] : [pasteboardItem]
+            }
+        }
     }
     
     // MARK: - Private Methods
@@ -594,15 +761,12 @@ class ClipboardManager: ObservableObject {
             let itemIDsToRemove = Set(itemsToRemove.map(\.id))
             self.clipboardHistory.removeAll { itemIDsToRemove.contains($0.id) }
 
-            for oldItem in itemsToRemove {
-                self.deletePayloadFiles(for: oldItem)
-            }
-
             // Add to beginning of array
             self.clipboardHistory.insert(item, at: 0)
             self.lastCopiedItemDate = item.timestamp
             
             self.trimHistoryToLimit()
+            self.cleanupOldFiles()
             self.saveArchive()
         }
     }
@@ -630,7 +794,7 @@ class ClipboardManager: ObservableObject {
     private func cleanupOldFiles() {
         guard let files = try? FileManager.default.contentsOfDirectory(at: ClipboardManager.clipboardDataDirectory, includingPropertiesForKeys: nil) else { return }
         
-        let allItems = clipboardHistory + pinnedItems
+        let allItems = clipboardHistory + pinnedItems + groups.flatMap(\.items)
         let referencedFiles = Set(allItems.compactMap { $0.imageFileName })
         
         for file in files {
@@ -649,20 +813,12 @@ class ClipboardManager: ObservableObject {
 
     private func trimHistoryToLimit() {
         let limit = max(1, maxHistoryItems)
-        let itemsToDelete = Array(clipboardHistory.dropFirst(limit))
-        for item in itemsToDelete {
-            deletePayloadFiles(for: item)
-        }
         clipboardHistory = Array(clipboardHistory.prefix(limit))
     }
 
     private func removeExpiredItems() {
         guard expirationDays > 0 else { return }
         let cutoff = Calendar.current.date(byAdding: .day, value: -expirationDays, to: Date()) ?? .distantPast
-        let expiredItems = clipboardHistory.filter { $0.timestamp < cutoff }
-        for item in expiredItems {
-            deletePayloadFiles(for: item)
-        }
         clipboardHistory.removeAll { $0.timestamp < cutoff }
     }
 
@@ -676,6 +832,11 @@ class ClipboardManager: ObservableObject {
 
         clipboardHistory.removeAll { !hasImagePayload($0) }
         pinnedItems.removeAll { !hasImagePayload($0) }
+        groups = groups.compactMap { group in
+            var repairedGroup = group
+            repairedGroup.items = group.items.filter(hasImagePayload)
+            return repairedGroup.items.isEmpty ? nil : repairedGroup
+        }
     }
 
     private func performDatabaseMaintenance() {
@@ -687,20 +848,15 @@ class ClipboardManager: ObservableObject {
         saveArchive()
     }
 
-    private func deletePayloadFiles(for item: ClipboardItem) {
-        if let fileName = item.imageFileName {
-            try? FileManager.default.removeItem(at: ClipboardManager.clipboardDataDirectory.appendingPathComponent(fileName))
-        }
-        if let fileName = item.rtfFileName {
-            try? FileManager.default.removeItem(at: ClipboardManager.clipboardPayloadDirectory.appendingPathComponent(fileName))
-        }
-    }
-    
     // MARK: - Persistence
     
     @discardableResult
     private func saveArchive() -> Bool {
-        let archive = ClipboardArchive(history: clipboardHistory, pinnedItems: pinnedItems)
+        let archive = ClipboardArchive(
+            history: clipboardHistory,
+            pinnedItems: pinnedItems,
+            groups: groups
+        )
 
         do {
             let encoded = try JSONEncoder().encode(archive)
@@ -717,7 +873,9 @@ class ClipboardManager: ObservableObject {
            let archive = try? JSONDecoder().decode(ClipboardArchive.self, from: data) {
             clipboardHistory = archive.history
             pinnedItems = archive.pinnedItems
+            groups = archive.groups ?? []
             migrateLegacyImageFiles()
+            migrateLegacyRTFPayloads()
             return
         }
 
@@ -728,6 +886,7 @@ class ClipboardManager: ObservableObject {
 
         clipboardHistory = legacyHistory
         pinnedItems = legacyPinnedItems
+        groups = []
         migrateLegacyImageFiles()
         migrateLegacyRTFPayloads()
 
@@ -740,7 +899,7 @@ class ClipboardManager: ObservableObject {
 
     private func migrateLegacyImageFiles() {
         let fileManager = FileManager.default
-        let allItems = clipboardHistory + pinnedItems
+        let allItems = clipboardHistory + pinnedItems + groups.flatMap(\.items)
 
         for fileName in Set(allItems.compactMap(\.imageFileName)) {
             let sourceURL = ClipboardManager.legacyClipboardDataDirectory.appendingPathComponent(fileName)
@@ -754,6 +913,9 @@ class ClipboardManager: ObservableObject {
     private func migrateLegacyRTFPayloads() {
         migrateLegacyRTFPayloads(in: &clipboardHistory)
         migrateLegacyRTFPayloads(in: &pinnedItems)
+        for index in groups.indices {
+            migrateLegacyRTFPayloads(in: &groups[index].items)
+        }
     }
 
     private func migrateLegacyRTFPayloads(in items: inout [ClipboardItem]) {

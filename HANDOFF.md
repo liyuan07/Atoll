@@ -1,12 +1,12 @@
 # Atoll 本地开发交接
 
-更新日期：2026-07-12（Asia/Shanghai）
+更新日期：2026-07-20（Asia/Shanghai）
 
 ## 当前状态
 
 - 仓库：`/Users/liyuan/Desktop/code/Atoll-2.2.0`
-- 分支：`main`，当前 `HEAD` 为 `ac15410 Revert Soda Music UI automation`。
-- 本地版本：`2.2.2 (14)`。
+- 分支：`main`。
+- 本地版本：`2.2.5 (17)`。
 - 唯一允许启动的主程序：`/Applications/Atoll.app`。
 - 当前采用本地使用模式：**只本地 commit，绝不 push；不要加入 GitHub、在线更新或自动更新功能。**
 - 每次完成代码变更后，重启 Atoll 和 `AtollCodexUsage`。
@@ -89,6 +89,9 @@ codesign --verify --deep --strict /Applications/Atoll.app
 - 唤起后可直接输入，支持模糊匹配。
 - `↑` / `↓` 切换条目，`←` / `→` 切换分类。
 - `Enter`：选中条目移到队列首位、关闭面板，并向唤起前的应用执行一次粘贴。
+- 链接条目显示原始完整 URL，不再只显示末级路径或 `/`。
+- 按住 `⌘` 点击可跨文本、链接、图片、文件、富文本等类型多选；选择两项以上后按 `Enter` 会持久化为一个分组。
+- “分组”栏目支持搜索、删除、整组复制；选中分组后按 `Enter` 会向唤起前的应用一次性粘贴整组内容。纯文本分组按原顺序用换行拼接，其他类型写入多项系统剪贴板。
 - `Esc`：关闭剪切板管理器。
 - 界面使用中文。
 
