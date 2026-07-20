@@ -301,6 +301,17 @@ class ClipboardManager: ObservableObject {
         return directory
     }()
 
+    static let clipboardImageExportDirectory: URL = {
+        let directory = clipboardArchiveDirectory.appendingPathComponent("Image Exports", isDirectory: true)
+        try? FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        return directory
+    }()
+
+    private static let imageExportQueue = DispatchQueue(
+        label: "com.Ebullioscopic.Atoll.clipboard-image-export",
+        qos: .userInitiated
+    )
+
     private static let archiveFileURL = clipboardArchiveDirectory.appendingPathComponent("history.json")
     private static let legacyClipboardDataDirectory: URL = {
         FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first!
@@ -382,22 +393,22 @@ class ClipboardManager: ObservableObject {
         let textCompatibleItems = group.items.filter {
             [.text, .url, .rtf, .unknown].contains($0.type) && $0.stringData != nil
         }
+        let isMultiImageGroup = group.items.count > 1
+            && group.items.allSatisfy { $0.type == .image }
 
         // Text destinations usually consume only the first pasteboard item.
         // A single newline-delimited representation guarantees that every
         // selected text value is pasted, in the same order it had in the list.
-        if textCompatibleItems.count == group.items.count,
+        if isMultiImageGroup,
+           let imageItems = multiImagePasteboardItems(for: group.items) {
+            preparedItems = imageItems
+        } else if textCompatibleItems.count == group.items.count,
            let combinedItem = combinedTextPasteboardItem(for: textCompatibleItems) {
             preparedItems = [combinedItem]
         } else {
             preparedItems = pasteboardItems(for: group.items)
         }
         guard !preparedItems.isEmpty else { return false }
-
-        addMultiImageFileRepresentations(
-            to: preparedItems,
-            for: group.items
-        )
 
         // Group activation is also an intentional pasteboard write, so it must
         // preserve any external copy that arrived between monitor ticks.
@@ -413,8 +424,9 @@ class ClipboardManager: ObservableObject {
         return true
     }
 
-    func activateItem(_ item: ClipboardItem) {
-        guard copyToClipboard(item) else { return }
+    @discardableResult
+    func activateItem(_ item: ClipboardItem) -> Bool {
+        guard copyToClipboard(item) else { return false }
 
         if let index = pinnedItems.firstIndex(where: { $0.id == item.id }) {
             let promotedItem = pinnedItems.remove(at: index)
@@ -425,6 +437,7 @@ class ClipboardManager: ObservableObject {
         }
 
         saveArchive()
+        return true
     }
 
     @discardableResult
@@ -633,33 +646,69 @@ class ClipboardManager: ObservableObject {
         }
     }
 
-    /// Image groups should look like files copied together in Finder as well as
-    /// raw image objects. Applications such as Codex enumerate every file URL
-    /// from a single paste event, while they often consume only the first raw
-    /// image pasteboard item.
-    private func addMultiImageFileRepresentations(
-        to preparedItems: [NSPasteboardItem],
+    /// Build one Finder-compatible snapshot containing every selected image.
+    /// TIFF archives are exported to PNG first so destinations such as Codex
+    /// show the actual image previews instead of generic TIFF attachment cards.
+    private func multiImagePasteboardItems(
         for items: [ClipboardItem]
-    ) {
-        guard items.count > 1,
-              items.allSatisfy({ $0.type == .image })
-        else { return }
+    ) -> [NSPasteboardItem]? {
+        let sourceURLs = items.compactMap(\.imageFileURL)
+        guard sourceURLs.count == items.count else { return nil }
 
-        let imageURLs = items.compactMap(\.imageFileURL)
-        guard imageURLs.count == items.count,
-              preparedItems.count == items.count
-        else { return }
+        let imageURLs = Self.imageExportQueue.sync {
+            sourceURLs.compactMap(Self.shareableImageURL)
+        }
+        guard imageURLs.count == items.count else { return nil }
 
-        for (pasteboardItem, imageURL) in zip(preparedItems, imageURLs) {
+        let pasteboardItems = imageURLs.compactMap { imageURL -> NSPasteboardItem? in
+            guard let imageData = try? Data(contentsOf: imageURL),
+                  !imageData.isEmpty else {
+                return nil
+            }
+
+            let pasteboardItem = NSPasteboardItem()
+            let imageType = UTType(filenameExtension: imageURL.pathExtension)
+                .map { NSPasteboard.PasteboardType($0.identifier) }
+                ?? .png
+            pasteboardItem.setData(imageData, forType: imageType)
             pasteboardItem.setString(imageURL.absoluteString, forType: .fileURL)
+            return pasteboardItem
+        }
+        guard pasteboardItems.count == items.count else { return nil }
+
+        return pasteboardItems
+    }
+
+    private static func shareableImageURL(_ sourceURL: URL) -> URL? {
+        let sourceExtension = sourceURL.pathExtension.lowercased()
+        guard ["tif", "tiff"].contains(sourceExtension) else {
+            return sourceURL
         }
 
-        // Keep the legacy Finder representation on the first item because some
-        // destinations still request one property-list containing every path.
-        preparedItems.first?.setPropertyList(
-            imageURLs.map(\.path),
-            forType: NSPasteboard.PasteboardType("NSFilenamesPboardType")
-        )
+        let exportURL = clipboardImageExportDirectory
+            .appendingPathComponent(sourceURL.deletingPathExtension().lastPathComponent)
+            .appendingPathExtension("png")
+        if FileManager.default.fileExists(atPath: exportURL.path) {
+            return exportURL
+        }
+
+        guard let source = CGImageSourceCreateWithURL(sourceURL as CFURL, nil),
+              CGImageSourceGetCount(source) > 0,
+              let destination = CGImageDestinationCreateWithURL(
+                exportURL as CFURL,
+                UTType.png.identifier as CFString,
+                1,
+                nil
+              ) else {
+            return sourceURL
+        }
+
+        CGImageDestinationAddImageFromSource(destination, source, 0, nil)
+        guard CGImageDestinationFinalize(destination) else {
+            try? FileManager.default.removeItem(at: exportURL)
+            return sourceURL
+        }
+        return exportURL
     }
 
     private func hasSameGroupItems(
@@ -879,6 +928,23 @@ class ClipboardManager: ObservableObject {
         for file in files {
             let fileName = file.lastPathComponent
             if !referencedFiles.contains(fileName) {
+                try? FileManager.default.removeItem(at: file)
+            }
+        }
+
+        let referencedExportFiles = Set(
+            referencedFiles.map {
+                URL(fileURLWithPath: $0)
+                    .deletingPathExtension()
+                    .appendingPathExtension("png")
+                    .lastPathComponent
+            }
+        )
+        if let exportFiles = try? FileManager.default.contentsOfDirectory(
+            at: ClipboardManager.clipboardImageExportDirectory,
+            includingPropertiesForKeys: nil
+        ) {
+            for file in exportFiles where !referencedExportFiles.contains(file.lastPathComponent) {
                 try? FileManager.default.removeItem(at: file)
             }
         }

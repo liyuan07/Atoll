@@ -73,7 +73,7 @@ struct ClipboardPopover: View {
         guard let selectedItemID,
               let item = filteredItems.first(where: { $0.id == selectedItemID })
         else { return }
-        clipboardManager.activateItem(item)
+        guard clipboardManager.activateItem(item) else { return }
         dismiss()
         ClipboardPasteCoordinator.shared.pasteIntoCapturedApplication()
     }

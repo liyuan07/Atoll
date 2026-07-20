@@ -74,7 +74,7 @@ struct ClipboardWindow: View {
 
     private func activate(_ item: ClipboardItem) {
         selectedItemID = item.id
-        clipboardManager.activateItem(item)
+        guard clipboardManager.activateItem(item) else { return }
         ClipboardWindowManager.shared.hideClipboardWindow()
         ClipboardPasteCoordinator.shared.pasteIntoCapturedApplication()
     }

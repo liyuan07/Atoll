@@ -16,32 +16,64 @@ final class ClipboardPasteCoordinator {
     static let shared = ClipboardPasteCoordinator()
 
     private var targetApplication: NSRunningApplication?
+    private var lastExternalApplication: NSRunningApplication?
+    private var activationObserver: NSObjectProtocol?
     private var pasteTask: Task<Void, Never>?
     private var pasteGeneration: UInt64 = 0
 
-    private init() {}
+    private init() {
+        rememberExternalApplication(NSWorkspace.shared.frontmostApplication)
+        activationObserver = NSWorkspace.shared.notificationCenter.addObserver(
+            forName: NSWorkspace.didActivateApplicationNotification,
+            object: nil,
+            queue: .main
+        ) { [weak self] notification in
+            let application = notification.userInfo?[
+                NSWorkspace.applicationUserInfoKey
+            ] as? NSRunningApplication
+            Task { @MainActor [weak self] in
+                self?.rememberExternalApplication(application)
+            }
+        }
+    }
 
     func captureCurrentApplication() {
         cancelPendingPaste()
-        guard let application = NSWorkspace.shared.frontmostApplication,
-              application.bundleIdentifier != Bundle.main.bundleIdentifier
-        else { return }
-        targetApplication = application
+        if let application = externalApplication(
+            from: NSWorkspace.shared.frontmostApplication
+        ) {
+            targetApplication = application
+            lastExternalApplication = application
+        } else if targetApplication?.isTerminated != false {
+            targetApplication = validLastExternalApplication
+        }
     }
 
     func pasteIntoCapturedApplication() {
         cancelPendingPaste()
         let generation = pasteGeneration
-        guard let application = targetApplication, !application.isTerminated else {
+        guard let application = resolvedTargetApplication else {
             targetApplication = nil
             return
         }
         targetApplication = nil
 
-        application.activate()
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.18) { [weak self] in
-            guard self?.pasteGeneration == generation else { return }
-            Self.postPasteShortcut()
+        pasteTask = Task { @MainActor [weak self] in
+            application.activate(options: [.activateAllWindows])
+            let isFrontmost = await Self.waitForApplicationToActivate(application)
+            guard !Task.isCancelled,
+                  self?.pasteGeneration == generation,
+                  !application.isTerminated else {
+                return
+            }
+
+            Self.postPasteShortcut(
+                to: application.processIdentifier,
+                globally: isFrontmost
+            )
+            if self?.pasteGeneration == generation {
+                self?.pasteTask = nil
+            }
         }
     }
 
@@ -63,7 +95,7 @@ final class ClipboardPasteCoordinator {
         }
 
         cancelPendingPaste()
-        guard let application = targetApplication, !application.isTerminated else {
+        guard let application = resolvedTargetApplication else {
             targetApplication = nil
             return
         }
@@ -71,9 +103,10 @@ final class ClipboardPasteCoordinator {
 
         let generation = pasteGeneration
         pasteTask = Task { @MainActor [weak self] in
-            application.activate()
-            guard await Self.waitForPasteTarget(nanoseconds: 180_000_000),
-                  self?.pasteGeneration == generation else {
+            application.activate(options: [.activateAllWindows])
+            let isFrontmost = await Self.waitForApplicationToActivate(application)
+            guard self?.pasteGeneration == generation,
+                  !application.isTerminated else {
                 return
             }
 
@@ -82,7 +115,10 @@ final class ClipboardPasteCoordinator {
                       self?.pasteGeneration == generation else { return }
                 guard ClipboardManager.shared.copyToClipboard(item) else { continue }
 
-                Self.postPasteShortcut()
+                Self.postPasteShortcut(
+                    to: application.processIdentifier,
+                    globally: isFrontmost
+                )
                 guard await Self.waitForPasteTarget(nanoseconds: 500_000_000),
                       self?.pasteGeneration == generation else {
                     return
@@ -104,6 +140,53 @@ final class ClipboardPasteCoordinator {
         pasteTask = nil
     }
 
+    private var resolvedTargetApplication: NSRunningApplication? {
+        if let targetApplication, !targetApplication.isTerminated {
+            return targetApplication
+        }
+        return validLastExternalApplication
+    }
+
+    private var validLastExternalApplication: NSRunningApplication? {
+        guard let lastExternalApplication,
+              !lastExternalApplication.isTerminated else {
+            return nil
+        }
+        return lastExternalApplication
+    }
+
+    private func rememberExternalApplication(_ application: NSRunningApplication?) {
+        guard let application = externalApplication(from: application) else { return }
+        lastExternalApplication = application
+    }
+
+    private func externalApplication(
+        from application: NSRunningApplication?
+    ) -> NSRunningApplication? {
+        guard let application,
+              !application.isTerminated,
+              application.bundleIdentifier != Bundle.main.bundleIdentifier else {
+            return nil
+        }
+        return application
+    }
+
+    private static func waitForApplicationToActivate(
+        _ application: NSRunningApplication
+    ) async -> Bool {
+        for _ in 0..<40 {
+            guard !Task.isCancelled, !application.isTerminated else { return false }
+            if NSWorkspace.shared.frontmostApplication?.processIdentifier
+                == application.processIdentifier {
+                return true
+            }
+            guard await waitForPasteTarget(nanoseconds: 25_000_000) else {
+                return false
+            }
+        }
+        return false
+    }
+
     private static func waitForPasteTarget(nanoseconds: UInt64) async -> Bool {
         do {
             try await Task.sleep(nanoseconds: nanoseconds)
@@ -113,7 +196,10 @@ final class ClipboardPasteCoordinator {
         }
     }
 
-    private static func postPasteShortcut() {
+    private static func postPasteShortcut(
+        to processIdentifier: pid_t,
+        globally: Bool
+    ) {
         let source = CGEventSource(stateID: .hidSystemState)
         guard let keyDown = CGEvent(keyboardEventSource: source, virtualKey: 9, keyDown: true),
               let keyUp = CGEvent(keyboardEventSource: source, virtualKey: 9, keyDown: false)
@@ -121,7 +207,12 @@ final class ClipboardPasteCoordinator {
 
         keyDown.flags = .maskCommand
         keyUp.flags = .maskCommand
-        keyDown.post(tap: .cghidEventTap)
-        keyUp.post(tap: .cghidEventTap)
+        if globally {
+            keyDown.post(tap: .cghidEventTap)
+            keyUp.post(tap: .cghidEventTap)
+        } else {
+            keyDown.postToPid(processIdentifier)
+            keyUp.postToPid(processIdentifier)
+        }
     }
 }
