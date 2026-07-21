@@ -129,7 +129,7 @@ class DynamicIslandViewCoordinator: ObservableObject {
     @Published var selectedExtensionExperienceID: String?
     
     
-    @AppStorage("firstLaunch") var firstLaunch: Bool = true
+    @AppStorage("firstLaunch") var firstLaunch: Bool = false
     @AppStorage("showWhatsNew") var showWhatsNew: Bool = true
     @AppStorage("musicLiveActivityEnabled") var musicLiveActivityEnabled: Bool = true
     @AppStorage("timerLiveActivityEnabled") var timerLiveActivityEnabled: Bool = true

@@ -102,7 +102,6 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     let codexUsageIntegrationManager = CodexUsageIntegrationManager.shared
     var closeNotchWorkItem: DispatchWorkItem?
     private var previousScreens: [NSScreen]?
-    private var onboardingWindowController: NSWindowController?
     private var cancellables = Set<AnyCancellable>()
     private var windowsHiddenForLock = false
     private var optionalShortcutHandlersRegistered = false
@@ -111,15 +110,6 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     
     // Debouncing mechanism for window size updates
     private var windowSizeUpdateWorkItem: DispatchWorkItem?
-//    let calendarManager = CalendarManager.shared
-//    let webcamManager = WebcamManager.shared
-//    var closeNotchWorkItem: DispatchWorkItem?
-//    private var previousScreens: [NSScreen]?
-//    private var onboardingWindowController: NSWindowController?
-//    private var cancellables = Set<AnyCancellable>()
-//    
-//    // Debouncing mechanism for window size updates
-//    private var windowSizeUpdateWorkItem: DispatchWorkItem?
     
     private func debouncedUpdateWindowSize() {
         // Cancel any existing work item
@@ -531,6 +521,11 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     }
     
     func applicationDidFinishLaunching(_ notification: Notification) {
+        // Atoll now starts directly in its normal running state. Persist the
+        // migration as well so an older firstLaunch=true value can never bring
+        // back the retired welcome flow.
+        coordinator.firstLaunch = false
+
         let userInfo: [String: Any] = [
             AtollDistributedNotifications.UserInfoKey.sourcePID: NSNumber(value: ProcessInfo.processInfo.processIdentifier)
         ]
@@ -881,13 +876,6 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             adjustWindowPosition(changeAlpha: true)
         }
         
-        if coordinator.firstLaunch {
-            DispatchQueue.main.async {
-                self.showOnboardingWindow()
-            }
-            playWelcomeSound()
-        }
-        
         previousScreens = NSScreen.screens
 
         if Defaults[.enableLockScreenWeatherWidget] {
@@ -1184,11 +1172,6 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         }
     }
     
-    func playWelcomeSound() {
-        let audioPlayer = AudioPlayer()
-        audioPlayer.play(fileName: "dynamic", fileExtension: "m4a")
-    }
-    
     func deviceHasNotch() -> Bool {
         if #available(macOS 12.0, *) {
             for screen in NSScreen.screens {
@@ -1302,43 +1285,6 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
     
     
-    private func showOnboardingWindow() {
-        if onboardingWindowController == nil {
-            let window = NSWindow(
-                contentRect: NSRect(x: 0, y: 0, width: 400, height: 600),
-                styleMask: [.titled, .fullSizeContentView],
-                backing: .buffered,
-                defer: false
-            )
-            window.center()
-            window.title = "Onboarding"
-            window.titlebarAppearsTransparent = true
-            window.titleVisibility = .hidden
-            window.contentView = NSHostingView(rootView: OnboardingView(
-                onFinish: {
-                    window.orderOut(nil)
-                    NSApp.setActivationPolicy(.accessory)
-                    window.close()
-                    NSApp.deactivate()
-                },
-                onOpenSettings: {
-                    window.close()
-                    SettingsWindowController.shared.showWindow()
-                }
-            ))
-            window.isRestorable = false
-            window.identifier = NSUserInterfaceItemIdentifier("OnboardingWindow")
-
-            ScreenCaptureVisibilityManager.shared.register(window, scope: .panelsOnly)
-
-            onboardingWindowController = NSWindowController(window: window)
-        }
-
-        NSApp.setActivationPolicy(.regular)
-        NSApp.activate(ignoringOtherApps: true)
-        onboardingWindowController?.window?.makeKeyAndOrderFront(nil)
-        onboardingWindowController?.window?.orderFrontRegardless()
-    }
 }
 
 extension Notification.Name {

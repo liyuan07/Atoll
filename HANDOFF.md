@@ -6,7 +6,7 @@
 
 - 仓库：`/Users/liyuan/Desktop/code/Atoll-2.2.0`
 - 分支：`main`。
-- 本地版本：`2.3.0 (22)`。
+- 本地版本：`2.3.1 (23)`。
 - 唯一允许启动的主程序：`/Applications/Atoll.app`。
 - 当前采用本地使用模式：默认只本地 commit；只有用户明确要求时才 push。不要加入在线更新或自动更新功能。
 - 每次完成代码变更后，重启 Atoll 和 `AtollCodexUsage`。
@@ -97,6 +97,11 @@ codesign --verify --deep --strict /Applications/Atoll.app
 - 图片、富文本和文件会在清空系统剪贴板之前完成载荷预检；载荷失效时保持当前剪贴板不变，也不会错误地把失效条目提到首位。
 - `Esc`：关闭剪切板管理器。
 - 界面使用中文。
+
+## 启动行为
+
+- 已移除首次启动欢迎/引导窗口和欢迎音效触发。
+- 无论新安装还是旧版本遗留了 `firstLaunch=true`，启动时都会立即迁移为正常运行状态，直接显示常规 Atoll 界面；不会重置用户设置、权限或数据。
 
 实测时，必须确认正式 Atoll 具有辅助功能权限；否则 CGEvent 粘贴不会送达目标应用。可使用 TextEdit 手工回归：复制一段唯一文本 → 聚焦 TextEdit → `⌘⇧J` → 输入文本片段筛选 → `Enter`，应关闭面板并将所选文本粘贴进 TextEdit。
 
