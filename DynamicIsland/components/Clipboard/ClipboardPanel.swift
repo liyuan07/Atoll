@@ -25,6 +25,10 @@ private extension Notification.Name {
     )
 }
 
+private enum ClipboardPanelNotificationKey {
+    static let extendsSelection = "extendsSelection"
+}
+
 private func applyClipboardCornerMask(_ view: NSView, radius: CGFloat) {
     view.wantsLayer = true
     view.layer?.masksToBounds = true
@@ -108,7 +112,11 @@ class ClipboardPanel: NSPanel {
         case 36, 76:
             NotificationCenter.default.post(
                 name: .clipboardPanelActivateSelection,
-                object: self
+                object: self,
+                userInfo: [
+                    ClipboardPanelNotificationKey.extendsSelection:
+                        event.modifierFlags.contains(.command)
+                ]
             )
             return true
         case 53:
@@ -278,24 +286,43 @@ struct ClipboardPanelView: View {
                 )
             } else {
                 shouldScrollItemSelectionIntoView = true
-                selectedItemID = movedClipboardSelection(
+                let nextItemID = movedClipboardSelection(
                     from: selectedItemID,
                     direction: direction,
                     items: filteredItems
                 )
-                selectedItemIDs = selectedItemID.map { [$0] } ?? []
+                selectedItemID = nextItemID
+
+                // Command keeps the existing multi-selection while the arrow
+                // keys move the keyboard focus. Command+Enter can then toggle
+                // the focused row without losing items selected earlier.
+                if !currentModifierFlags.contains(.command) {
+                    selectedItemIDs.removeAll()
+                }
             }
         default:
             break
         }
     }
 
-    private func activateSelection() {
+    private var currentModifierFlags: NSEvent.ModifierFlags {
+        NSApp.currentEvent?.modifierFlags ?? NSEvent.modifierFlags
+    }
+
+    private func activateSelection(extendingSelection: Bool = false) {
         if selectedTab == .groups {
             guard let selectedGroupID,
                   let group = filteredGroups.first(where: { $0.id == selectedGroupID })
             else { return }
             activate(group)
+            return
+        }
+
+        if extendingSelection {
+            guard let selectedItemID,
+                  let item = filteredItems.first(where: { $0.id == selectedItemID })
+            else { return }
+            select(item, extendingSelection: true)
             return
         }
 
@@ -332,14 +359,11 @@ struct ClipboardPanelView: View {
         // if multi-selection had exited.
         shouldScrollItemSelectionIntoView = false
         if extendingSelection {
+            selectedItemID = item.id
             if selectedItemIDs.contains(item.id) {
                 selectedItemIDs.remove(item.id)
-                selectedItemID = filteredItems.first(where: {
-                    selectedItemIDs.contains($0.id)
-                })?.id
             } else {
                 selectedItemIDs.insert(item.id)
-                selectedItemID = item.id
             }
         } else {
             selectedItemID = item.id
@@ -363,7 +387,6 @@ struct ClipboardPanelView: View {
             selectedGroupID = filteredGroups.first?.id
         } else if let firstID = filteredItems.first?.id {
             selectedItemID = firstID
-            selectedItemIDs = [firstID]
         }
     }
     
@@ -374,7 +397,7 @@ struct ClipboardPanelView: View {
                 selectedTab: $selectedTab,
                 searchText: $searchText, 
                 onMove: moveSelection,
-                onActivate: activateSelection,
+                onActivate: { activateSelection() },
                 onClose: onClose
             )
             
@@ -387,11 +410,11 @@ struct ClipboardPanelView: View {
                         .foregroundColor(.accentColor)
                     Text("已选择 \(selectedItemIDs.count) 项")
                         .font(.system(size: 11, weight: .semibold))
-                    Text("按 Enter 保存为分组并直接粘贴")
+                    Text("松开 ⌘ 后按 Enter：保存分组并直接粘贴")
                         .font(.system(size: 11))
                         .foregroundColor(.secondary)
                     Spacer()
-                    Text("⌘ 点击可增减选择")
+                    Text("⌘ 点击 / ⌘ Enter 可增减选择")
                         .font(.system(size: 10))
                         .foregroundColor(.secondary)
                 }
@@ -448,7 +471,10 @@ struct ClipboardPanelView: View {
                                 ClipboardPanelItemRow(
                                     item: item,
                                     isHovered: hoveredItemId == item.id,
-                                    isSelected: selectedItemIDs.contains(item.id),
+                                    isSelected: selectedItemIDs.isEmpty
+                                        ? selectedItemID == item.id
+                                        : selectedItemIDs.contains(item.id),
+                                    isFocused: selectedItemID == item.id,
                                     isPinned: clipboardManager.pinnedItems.contains(where: { $0.id == item.id }),
                                     onHover: { hoveredItemId = $0 },
                                     onSelect: { extendingSelection in
@@ -484,8 +510,11 @@ struct ClipboardPanelView: View {
         .onChange(of: searchText) { _, _ in
             resetSelection()
         }
-        .onReceive(NotificationCenter.default.publisher(for: .clipboardPanelActivateSelection)) { _ in
-            activateSelection()
+        .onReceive(NotificationCenter.default.publisher(for: .clipboardPanelActivateSelection)) { notification in
+            let extendsSelection = notification.userInfo?[
+                ClipboardPanelNotificationKey.extendsSelection
+            ] as? Bool ?? false
+            activateSelection(extendingSelection: extendsSelection)
         }
     }
 }
@@ -615,7 +644,7 @@ struct ClipboardPanelEmptyState: View {
         case .favorites:
             return "将条目加入收藏后会显示在这里"
         case .groups:
-            return "按住 ⌘ 选择多个条目，再按 Enter 保存为分组"
+            return "按住 ⌘ 点击或按 Enter 选择多项，松开 ⌘ 再按 Enter 保存"
         default:
             return "复制内容后会显示在这里"
         }
@@ -626,6 +655,7 @@ struct ClipboardPanelItemRow: View {
     let item: ClipboardItem
     let isHovered: Bool
     let isSelected: Bool
+    let isFocused: Bool
     let isPinned: Bool
     let onHover: (UUID?) -> Void
     let onSelect: (Bool) -> Void
@@ -719,6 +749,13 @@ struct ClipboardPanelItemRow: View {
         .background(
             RoundedRectangle(cornerRadius: 6)
                 .fill(isSelected ? Color.accentColor.opacity(0.22) : (isHovered ? Color.gray.opacity(0.1) : Color.clear))
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 6)
+                .stroke(
+                    isFocused ? Color.accentColor.opacity(0.75) : Color.clear,
+                    lineWidth: 1
+                )
         )
         .contentShape(Rectangle())
         .onHover { hovering in

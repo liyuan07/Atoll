@@ -369,9 +369,9 @@ func movedClipboardTab(from currentTab: ClipboardTab, direction: MoveCommandDire
 
     switch direction {
     case .left:
-        return tabs[max(0, currentIndex - 1)]
+        return tabs[(currentIndex - 1 + tabs.count) % tabs.count]
     case .right:
-        return tabs[min(tabs.count - 1, currentIndex + 1)]
+        return tabs[(currentIndex + 1) % tabs.count]
     default:
         return currentTab
     }
